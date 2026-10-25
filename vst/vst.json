@@ -1,0 +1,10 @@
+{
+  "name": "Okto",
+  "vendor": "lunarscraper",
+  "uid": "Okto",
+  "version": 100,
+  "so": "okto.so",
+  "module": "module.json",
+  "layout": "layout.conf",
+  "_comment": "Instrument: 8-operator FM synthesizer, engine after libfmsynth, envelopes in the manner of FM8 (okto_core.h). vst.json/module.json only feed mpc-vst-plugins' tools/gen_vst.py for params.h + the skin. module.json and okto_params.h come from tools/gen_okto.py. The plugin is okto_vst.cpp, built by this port's own build.sh."
+}
