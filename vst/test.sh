@@ -7,9 +7,9 @@ docker run --rm -v "$PWD":/b -w /b gcc:12 bash -euc '
   mkdir -p build/x86
   SAN="-fsanitize=address,undefined"
   g++ -O0 -g $SAN -std=c++17 -fPIC -shared -Ibuild -I. -o build/x86/okto-x86.so okto_vst.cpp -lpthread
-  g++ -O0 -g $SAN -std=c++17 -o build/x86/host_test host_test.cpp -ldl
+  g++ -O0 -g $SAN -std=c++17 -Ibuild -I. -o build/x86/host_test host_test.cpp -ldl
   ASAN_OPTIONS=detect_leaks=0 ./build/x86/host_test ./build/x86/okto-x86.so
   g++ -O3 -ffast-math -std=c++17 -fPIC -shared -fvisibility=hidden -Ibuild -I. -o build/x86/okto-o3.so okto_vst.cpp -lpthread
-  g++ -O2 -std=c++17 -o build/x86/bench host_test.cpp -ldl
+  g++ -O2 -std=c++17 -Ibuild -I. -o build/x86/bench host_test.cpp -ldl
   ./build/x86/bench ./build/x86/okto-o3.so bench
 '

@@ -17,7 +17,7 @@
 #include <vector>
 #include <dlfcn.h>
 
-#include "params.h"   /* build/params.h: the same table the plugin is built with (ranges, options) */
+#include "build/params.h"   /* the same table the plugin is built with (ranges, options) */
 
 struct AEffect;
 typedef intptr_t (*audioMasterCallback)(AEffect *, int32_t, int32_t, intptr_t, void *, float);
