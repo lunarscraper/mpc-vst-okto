@@ -7,9 +7,12 @@ MPC Live/One/X/Key). Die FM-Engine folgt [libfmsynth](https://github.com/Themais
 von Hans-Kristian Arntzen (MIT); dazu kommen Hüllkurven, die sich wie ein Step-Sequencer nutzen
 lassen, im Stil von FM8. Keine Abhängigkeiten, eine Header-Datei für den Klang.
 
-**Stand:** vollständiges Repo (Klang, Plugin-Hülle, Skin, 32 Werksklänge, Build, Workflow).
-Offline getestet (Host-Test mit ASan/UBSan bestanden); der Build über GitHub Actions und der Test
-auf der Force stehen noch aus.
+**Stand:** vollständiges Repo (Klang, Plugin-Hülle, Skin, 32 Werksklänge, Preset-Generator, Build, Workflow).
+Version 1.1.0: Preset-Generator auf der Seite PRESET (neue Parameter nur angehängt – alte Projekte und
+Speicherplätze laden unverändert).
+1.0 läuft auf der Force. Der Generator (1.1.0) ist offline getestet (Host-Test mit ASan/UBSan
+bestanden, alle Stile mit VARIATION 0/50/100 und MODULATION 0/100); Build über GitHub Actions und
+Test auf der Force stehen noch aus.
 
 ## Was Okto kann
 
@@ -43,6 +46,8 @@ auf der Force stehen noch aus.
 - **32 Speicherplätze** mit LOAD/SAVE (Muster von Acid/Rattler), erscheinen auch in der
   Preset-Liste der Force; gemeinsam für alle Instanzen in `okto_presets.txt` neben dem
   Plugin-Ordner.
+- **Preset-Generator** (seit 1.1.0, nach dem Vorbild des carp 2000): STYLE, VARIATION, MODULATION,
+  RANDOM und UNDO auf der Seite PRESET – siehe unten.
 - Es werden nur die Operatoren gerechnet, die irgendwo am Ausgang ankommen.
 
 ## Seiten
@@ -63,13 +68,53 @@ Parameter (Presets, Projekte und Automation arbeiten damit).
 | TIMES | Time 1–4 | Time 5–8 (darunter Levels 1–8 zum Antippen) |
 | LFO | Rate, Wave, Sync, Delay | Vibrato, Wheel Vibrato, Wheel Bright (Key Sync nur per Touch) |
 | VOICE | Mode, Voices, Glide, Unison | Detune, Width, Transpose, Bend Range |
-| PRESET | Preset (blättern), Load, Save | |
+| PRESET | Style, Variation, Modulation, **RANDOM** | Preset (blättern), **LOAD**, **SAVE**, **UNDO** |
 
 Auf OP, OP MOD und ENV liegt EDIT auf dem ersten Q-Link, auf MATRIX, LEVELS und TIMES sind alle acht
 Q-Links Werte (EDIT dort per Touch oben). Bei EDIT = PITCH ist die Mitte der LEVEL-Regler 0.
 
 **Matrix lesen:** Auf der Seite MATRIX mit EDIT = OP 1 regelt „FROM OP 2“, wie stark OP 2 den OP 1
 moduliert. „FROM OP 1“ ist dann das Feedback von OP 1.
+
+## Preset-Generator
+
+Oben auf der Seite PRESET: **STYLE** wählen, **VARIATION** und **MODULATION** einstellen, **RANDOM**
+tippen. Der neue Klang spielt sofort; der PRESET-Regler zeigt „NEW TALK > 05“ (Stil, Zielplatz).
+Gefällt er, PRESET auf einen Platz drehen und **SAVE** – der Platz heißt dann nach dem Stil
+(„TALK 05“). **UNDO** geht durch die letzten 16 Klänge zurück, die RANDOM ersetzt hat.
+
+| Stil | Grundklang (VARIATION 0) |
+| --- | --- |
+| TALK | Formant-Gate / Alien-Sprech: knurrende 2:1-FM mit Feedback, Index und Gate laufen in einem 1/16-Step-Muster (das Muster aus „Formant Gate“ von ultramarinedist), drei Formant-Träger (Harmonische 5, 11, 17) folgen als Vokale. TRANSPOSE −24, um C3–C5 spielen |
+| LEAD | Goa-Lead (Feedback-Stapel, Legato-Glide, Unison) |
+| BASS | rollender Psy-Bass für 1/16-Noten |
+| ACID | quietschender Mono-Bass, bei VARIATION auch als 1/32-Schleife |
+| STAB | Psy-Stab mit Quinte, breit |
+| PAD | gläserne Fläche, langsam |
+| PLUCK | kurzer FM-Pluck |
+| BELL | unharmonische Glocken |
+| SEQ | Klangfarben-Sequenz beim Halten einer Taste, ab und zu mit Trancegate |
+| FX | Zap / Laser mit Pitch-Sturz |
+| DRONE | schwebende Träger, langsame Schleife |
+| PERC | FM-Kick oder metallischer Schlag |
+| ANY | ein Stil per Zufall |
+| MUTATE | verändert den Klang, der gerade spielt (VARIATION = wie weit) |
+
+- **VARIATION** (0–100): wie weit sich der Klang vom Grundklang entfernt – andere Ratios (ab etwa
+  60 auch unharmonische), Modulationsindex, Hüllkurvenzeiten, Wellenformen, Feedback, ein
+  zusätzlicher Modulator, neue Step-Muster, Unison. Bei 0 kommt immer derselbe Grundklang.
+- **MODULATION** (0–100): wie viel sich von selbst bewegt – Modulatoren als Step- oder
+  Loop-Hüllkurven im Tempo, LFO auf Pegel und Tonhöhe (bei TALK/SEQ oft S&H), ein kurzer
+  Pitch-Blip, Vibrato; das Modrad regelt immer die Helligkeit (WHEEL BRIGHT). Bei 0 bleibt nur die
+  Bewegung, die zum Stil gehört (die Steps von TALK und SEQ).
+- **Lautstärke:** Bei echter FM behält ein Sinus-Träger seinen Pegel, egal wie stark er moduliert
+  wird. Der Generator rechnet daher die Lautstärke aus OUT, LEVEL und den Hüllkurven der Träger
+  aus und stellt VOLUME auf etwa −20 dBFS pro Note wie bei den Werksklängen (Test über alle Stile:
+  rund −27 bis −15 dBFS). STAB und PAD bekommen 3 dB Reserve für Akkorde.
+- STYLE, VARIATION und MODULATION gehören zum Projekt, nicht zum Klang: Sie landen nie in einem
+  Speicherplatz, und LOAD ändert sie nicht.
+- Q-Links auf PRESET: Style, Variation, Modulation, Preset. RANDOM, UNDO, LOAD und SAVE sind
+  Tasten zum Antippen (große Beschriftung).
 
 ## Werksklänge (Plätze 1–32)
 
@@ -95,6 +140,7 @@ Projekt speichern.**
 
 ```
 vst/okto_core.h      Klangerzeugung (FM-Kern nach libfmsynth + Hüllkurven, LFO, Stimmen)
+vst/okto_random.h    Preset-Generator (Stile, VARIATION, MODULATION, Lautstärkeabgleich)
 vst/okto_vst.cpp     Plugin-Hülle: Parameter, EDIT-Auswahl, MIDI, 32 Speicherplätze, Projekt-Chunk
 vst/okto_params.h    erzeugt: Schlüssel, Startwerte, Werksklänge
 vst/module.json      erzeugt: Parameterliste = VST-Index-Reihenfolge (nur anhängen!)

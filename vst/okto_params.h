@@ -4,7 +4,8 @@
 enum {
     K_SEL = 0, X_OP0 = 1, X_FROM0 = 15, X_ENV0 = 23,
     G0 = 44, K_SLOT = 66, K_LOAD = 67, K_SAVE = 68,
-    OPR0 = 69, MAT0 = 349, PE0 = 413, NKEYS = 434,
+    OPR0 = 69, MAT0 = 349, PE0 = 413, NKEYS = 439,
+    K_RSTYLE = 434, K_RVAR = 435, K_RMOD = 436, K_RGO = 437, K_RUNDO = 438,
     NOPF = 14, NENVF = 21, NOPALL = 35,
 };
 enum { G_VOLUME = 44, G_BRIGHT = 45, G_FEEDBACK = 46, G_ENV_TIME = 47, G_REL_SCALE = 48, G_LFO_RATE = 49, G_LFO_WAVE = 50, G_LFO_SYNC = 51, G_LFO_DELAY = 52, G_LFO_KEY = 53, G_VIBRATO = 54, G_MW_VIB = 55, G_MW_BRIGHT = 56, G_VMODE = 57, G_VOICES = 58, G_GLIDE = 59, G_UNISON = 60, G_DETUNE = 61, G_WIDTH = 62, G_TRANSPOSE = 63, G_BEND = 64, G_PE_DEPTH = 65 };
@@ -445,6 +446,11 @@ static const char *const KEYS[NKEYS] = {
     "pe_t6",
     "pe_t7",
     "pe_t8",
+    "rnd_style",
+    "rnd_var",
+    "rnd_mod",
+    "rnd_go",
+    "rnd_undo",
 };
 struct KV { const char *key; float v; };
 static const KV START[] = {

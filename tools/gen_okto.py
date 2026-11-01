@@ -21,12 +21,15 @@ ESYNC = ["FREE", "1/32", "1/16T", "1/16", "1/8T", "1/8", "1/4T", "1/4", "1/2", "
 LFOW = ["SINE", "TRIANGLE", "SAW DOWN", "SAW UP", "SQUARE", "S&H"]
 LFOSYNC = ["FREE", "4/1", "2/1", "1/1", "1/2", "1/4", "1/8", "1/16", "1/4T", "1/8T", "1/16T"]
 SEL = ["OP 1", "OP 2", "OP 3", "OP 4", "OP 5", "OP 6", "OP 7", "OP 8", "PITCH"]
+# preset generator (vst/okto_random.h: oktornd::STYLE_NAME, same order)
+STYLES = ["TALK", "LEAD", "BASS", "ACID", "STAB", "PAD", "PLUCK", "BELL", "SEQ", "FX", "DRONE", "PERC", "ANY", "MUTATE"]
 
-def P(key, name, lo=None, hi=None, options=None, access=None):
+def P(key, name, lo=None, hi=None, options=None, access=None, default=None):
     d = {"key": key, "name": name}
     if options is not None: d["options"] = options
     elif lo is not None: d["min"], d["max"] = lo, hi
     if access: d["access"] = access
+    if default is not None: d["default"] = default
     return d
 
 # operator fields (proxy order = real order)
@@ -65,6 +68,11 @@ def params():
     for s in range(1, 9):
         for d in range(1, 9): ps.append(P("m%d_%d" % (s, d), "Op%d > Op%d" % (s, d), 0, 100))
     for k, n, lo, hi, o in envf(True): ps.append(P("pe_" + k, "PEnv " + n[4:], lo, hi, o))
+    # appended in 1.1.0: the preset generator (PRESET tab). Settings of the generator, not of the sound:
+    # kept in the project, never in a preset slot.
+    ps += [P("rnd_style", "Random Style", options=STYLES, default="TALK"),
+           P("rnd_var", "Variation", 0, 100, default=35), P("rnd_mod", "Modulation", 0, 100, default=40),
+           P("rnd_go", "Random", access="write"), P("rnd_undo", "Undo", access="write")]
     return ps
 
 # ---- unit laws (must match okto_vst.cpp) ----------------------------------------------------------
@@ -230,6 +238,7 @@ def main():
           "    K_SEL = %d, X_OP0 = %d, X_FROM0 = %d, X_ENV0 = %d," % (first("sel"), first("x_wave"), first("x_from1"), first("x_emode")),
           "    G0 = %d, K_SLOT = %d, K_LOAD = %d, K_SAVE = %d," % (first("volume"), first("slot"), first("load"), first("save")),
           "    OPR0 = %d, MAT0 = %d, PE0 = %d, NKEYS = %d," % (first("o1_wave"), first("m1_1"), first("pe_emode"), len(keys)),
+          "    K_RSTYLE = %d, K_RVAR = %d, K_RMOD = %d, K_RGO = %d, K_RUNDO = %d," % (first("rnd_style"), first("rnd_var"), first("rnd_mod"), first("rnd_go"), first("rnd_undo")),
           "    NOPF = %d, NENVF = %d, NOPALL = %d," % (nopf, nenv, nopf + nenv),
           "};"]
     L += ["enum { " + ", ".join("G_%s = %d" % (p["key"].upper(), keys.index(p["key"])) for p in GLOBAL) + " };"]

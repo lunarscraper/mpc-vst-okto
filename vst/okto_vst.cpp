@@ -4,7 +4,8 @@
  * armhf. The sound is okto_core.h; this file is the plug-in around it: parameters, MIDI
  * (sample-accurate; mod wheel, sustain, pitch bend), the host tempo for the synced envelopes and
  * the LFO, the 32 preset slots with LOAD/SAVE (pattern of mpc-vst-acid / mpc-vst-rattler), the
- * project chunk - and the EDIT selector.
+ * project chunk - and the EDIT selector. Since 1.1.0 also the preset generator (okto_random.h): STYLE,
+ * VARIATION, MODULATION, RANDOM and UNDO on the PRESET tab.
  *
  * EDIT selector: the skin edits one operator at a time (or the pitch envelope). Every operator
  * value exists as its own VST parameter (o<N>_..., m<S>_<D>, pe_...: presets, projects and
@@ -30,6 +31,8 @@
 #include "popup.h"    /* mpc-vst-plugins wrapper/popup.h, copied into build/ by build.sh */
 #include "okto_core.h"
 #include "okto_params.h"
+#include "okto_random.h"
+#include <ctime>
 
 /* ---- VST2 ABI (hand-written; no Steinberg SDK) ---------------------------- */
 struct AEffect;
@@ -80,7 +83,8 @@ static inline int OPK(int op, int f) { return OPR0 + op * NOPALL + f; }      /* 
 static inline int MATK(int s, int d) { return MAT0 + s * 8 + d; }
 static inline int PEK(int e) { return PE0 + e; }
 static bool is_proxy(int k) { return k >= X_OP0 && k < G0; }
-static bool is_trigger(int k) { return k == K_LOAD || k == K_SAVE; }
+static bool is_trigger(int k) { return k == K_LOAD || k == K_SAVE || k == K_RGO || k == K_RUNDO; }
+static bool is_gen_key(int k) { return k == K_RSTYLE || k == K_RVAR || k == K_RMOD; }
 
 static int IDX[NKEYS];
 static int KEY_OF[NPARAMS];   /* PARAMS[] position -> key, -1 = not ours (popup flags) */
@@ -89,8 +93,8 @@ static bool g_def_ok = false;
 
 /* slot, triggers and the edit knobs: never part of a chunk or a preset */
 static bool is_bank_key(int i) { const int k = KEY_OF[i]; return k < 0 || k == K_SLOT || is_trigger(k) || is_proxy(k); }
-/* EDIT is a way of working, not a sound: in the project chunk, never in a preset slot */
-static bool is_ui_key(int i) { return KEY_OF[i] == K_SEL; }
+/* EDIT and the generator's settings are a way of working, not a sound: in the project chunk, never in a preset slot */
+static bool is_ui_key(int i) { return KEY_OF[i] == K_SEL || is_gen_key(KEY_OF[i]); }
 
 enum { MAXEV = 512 };
 struct MidiEv { int32_t frame; uint8_t d[3]; };
@@ -117,6 +121,13 @@ struct Plugin {
     MidiEv ev[MAXEV];
     int nev = 0;
     std::vector<uint8_t> chunk;
+    /* the preset generator: UNDO goes back through the last sounds RANDOM replaced */
+    enum { NUNDO = 16 };
+    std::string undo[NUNDO];
+    int nundo = 0;
+    uint32_t rnd_count = 0;
+    std::atomic<int> fresh{-1};    /* the style of a generated sound not yet saved, -1 = none */
+    std::atomic<bool> show_new{false};   /* the PRESET knob says "NEW <style>" until it is turned */
 };
 
 static int param_index(const char *key) {
@@ -418,9 +429,52 @@ static bool slot_save(Plugin *w) {
     const int n = clampi(w->cur.load(), 0, NSLOTS - 1);
     std::string c = build_state(w, false);
     if (c.empty()) c = ";";              /* the plain start sound is a sound too */
+    const int st = w->fresh.exchange(-1);
     std::lock_guard<std::mutex> lk(g_bank_lock);
     g_slot_chunk[n] = c;
+    if (st >= 0 && st < oktornd::NSTYLES) {   /* a generated sound gets its style as a name: "TALK 07" */
+        char nm[24];
+        std::snprintf(nm, sizeof nm, "%s %02d", oktornd::STYLE_NAME[st], n + 1);
+        g_slot_name[n] = nm;
+    }
     return bank_write_locked();
+}
+
+/* ---- the preset generator ------------------------------------------------------- */
+static void set_sound(Plugin *w, const float *ui) {   /* every sound parameter from ui[key] */
+    for (int k = 0; k < NKEYS; k++) {
+        const int i = IDX[k];
+        if (i < 0 || is_bank_key(i) || is_ui_key(i)) continue;
+        set_val(w, i, std::round((double)ui[k] * 1000.0) / 1000.0);   /* the precision of a saved state: UNDO and SAVE give it back exactly */
+    }
+    for (int k = X_OP0; k < G0; k++) if (IDX[k] >= 0) w->notify[IDX[k]].store(1);   /* the edit knobs follow */
+    w->dirty.store(true);
+}
+static void random_sound(Plugin *w) {
+    if (w->nundo == Plugin::NUNDO) { for (int i = 1; i < Plugin::NUNDO; i++) w->undo[i - 1] = w->undo[i]; w->nundo--; }
+    w->undo[w->nundo++] = build_state(w, false);
+    const int style = clampi(ival(w, K_RSTYLE), 0, oktornd::NSTYLES - 1);
+    float ui[NKEYS];
+    if (style != oktornd::S_MUTATE) start_values(w);      /* a new sound starts from the plain start values */
+    for (int k = 0; k < NKEYS; k++) ui[k] = val(w, k);
+    /* VARIATION 0 is the style's home sound, the same every time; above, every press is new */
+    const float var = val(w, K_RVAR) * 0.01f, mod = val(w, K_RMOD) * 0.01f;
+    uint32_t seed = var <= 0 && style != oktornd::S_ANY && style != oktornd::S_MUTATE
+                              ? 0x51u + (uint32_t)style * 7919u + (uint32_t)std::lround(mod * 100) * 104729u
+                              : (uint32_t)std::time(nullptr) * 2654435761u ^ (uint32_t)(uintptr_t)w ^ (++w->rnd_count * 40503u);
+    if (const char *fix = std::getenv("OKTO_RND_SEED"))   /* tests: the same sounds on every run */
+        if (var > 0 || style == oktornd::S_ANY || style == oktornd::S_MUTATE) seed = (uint32_t)std::atoi(fix) + w->rnd_count * 40503u;
+    const int made = oktornd::generate(ui, style, var, mod, seed);
+    set_sound(w, ui);
+    w->fresh.store(made);
+    w->show_new.store(true);
+}
+static void undo_sound(Plugin *w) {
+    if (w->nundo <= 0) return;
+    const std::string t = w->undo[--w->nundo];
+    start_values(w);
+    apply_state(w, t, false);
+    w->fresh.store(-1);
 }
 
 static void set_param_now(Plugin *w, int32_t i, float n);
@@ -511,7 +565,7 @@ static void set_param_now(Plugin *w, int32_t i, float n) {
     if (key < 0) return;
     if (key == K_SLOT) {   /* browsing only: LOAD loads, so turning the knob can't wipe what is playing */
         const int v = (int)std::lround(clamp01(n) * (NSLOTS - 1));
-        if (v != w->cur.load()) { w->cur.store(v); w->need_update.store(true); }   /* the slot's name is shown */
+        if (v != w->cur.load()) { w->cur.store(v); w->show_new.store(false); w->need_update.store(true); }   /* the slot's name is shown */
         return;
     }
     if (is_trigger(key)) {
@@ -519,8 +573,10 @@ static void set_param_now(Plugin *w, int32_t i, float n) {
         const bool rising = down && !w->down[i];   /* an echo of our own automate must not fire again */
         w->down[i] = down;
         if (rising) {
-            if (key == K_LOAD) slot_load(w);
-            else slot_save(w);
+            if (key == K_LOAD) { slot_load(w); w->fresh.store(-1); }
+            else if (key == K_SAVE) slot_save(w);
+            else if (key == K_RGO) random_sound(w);
+            else undo_sound(w);
             w->release[i] = 1;
             w->need_update.store(true);
         }
@@ -590,6 +646,7 @@ static intptr_t set_chunk(Plugin *w, const void *data, intptr_t len) {
     start_values(w);
     ui_defaults(w);
     apply_state(w, t.substr(6), true);
+    w->fresh.store(-1);
     return 1;
 }
 
@@ -653,7 +710,12 @@ static void display_key(Plugin *w, int idx, char *buf, size_t n) {
 static void display(Plugin *w, int idx, char *buf, size_t n) {
     const param_t *pp = &PARAMS[idx];
     const int key = KEY_OF[idx];
-    if (key == K_SLOT) { std::snprintf(buf, n, "%s", slot_title(clampi(w->cur.load(), 0, NSLOTS - 1)).c_str()); return; }
+    if (key == K_SLOT) {
+        const int st = w->fresh.load();   /* a generated sound, not saved yet: SAVE puts it on this slot */
+        if (st >= 0 && st < oktornd::NSTYLES && w->show_new.load()) std::snprintf(buf, n, "NEW %s > %02d", oktornd::STYLE_NAME[st], clampi(w->cur.load(), 0, NSLOTS - 1) + 1);
+        else std::snprintf(buf, n, "%s", slot_title(clampi(w->cur.load(), 0, NSLOTS - 1)).c_str());
+        return;
+    }
     if (key >= 0 && is_trigger(key)) { buf[0] = 0; return; }
     if (popup_is(idx)) {
         const int u = norm_to_ui(pp, w->open[idx]);
@@ -679,6 +741,7 @@ static intptr_t dispatcher(AEffect *e, int32_t op, int32_t idx, intptr_t v, void
         if (v >= 0 && v < NSLOTS) {
             w->cur.store((int)v);
             slot_load(w);
+            w->fresh.store(-1);
             w->need_update.store(true);
         }
         return 0;

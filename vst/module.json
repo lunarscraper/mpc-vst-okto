@@ -3374,6 +3374,51 @@
    "name": "PEnv T8",
    "min": 0,
    "max": 100
+  },
+  {
+   "key": "rnd_style",
+   "name": "Random Style",
+   "options": [
+    "TALK",
+    "LEAD",
+    "BASS",
+    "ACID",
+    "STAB",
+    "PAD",
+    "PLUCK",
+    "BELL",
+    "SEQ",
+    "FX",
+    "DRONE",
+    "PERC",
+    "ANY",
+    "MUTATE"
+   ],
+   "default": "TALK"
+  },
+  {
+   "key": "rnd_var",
+   "name": "Variation",
+   "min": 0,
+   "max": 100,
+   "default": 35
+  },
+  {
+   "key": "rnd_mod",
+   "name": "Modulation",
+   "min": 0,
+   "max": 100,
+   "default": 40
+  },
+  {
+   "key": "rnd_go",
+   "name": "Random",
+   "access": "write"
+  },
+  {
+   "key": "rnd_undo",
+   "name": "Undo",
+   "access": "write"
   }
  ]
 }

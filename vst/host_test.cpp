@@ -166,6 +166,15 @@ int main(int argc, char **argv) {
             run(e, 3);
             std::printf("bench (this CPU, one core): %-40s %.2f %%\n", b.what, 100 * s / 10.0);
         }
+        {   /* the generator's TALK home sound: 6 operators, mono */
+            set(e, "rnd_style", 0); set(e, "rnd_var", 0); set(e, "rnd_mod", 0); press(e, "rnd_go");
+            on(e, 60); run(e, 0.05);
+            auto t0 = std::chrono::steady_clock::now();
+            run(e, 10.0);
+            double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+            off(e, 60); run(e, 3);
+            std::printf("bench (this CPU, one core): %-40s %.2f %%\n", "RANDOM TALK (6 op, mono), 1 note", 100 * s / 10.0);
+        }
         /* worst case: all eight operators sounding, the full 8 x 8 matrix, 16 voices */
         plain(e);
         set(e, "voices", 15);
@@ -498,6 +507,88 @@ int main(int argc, char **argv) {
         off(e, 60); off(e2, 60); run(e, 2); run(e2, 2);
         CHECK(std::fabs(rms(c1) - rms(c2)) < 0.02 * rms(c1) + 1e-4, "chunk restored a different sound");
         e2->dispatcher(e2, 1, 0, 0, nullptr, 0);
+    }
+
+    /* 9b. the preset generator: every style, VARIATION 0 / 50 / 100, MODULATION 0 / 100 (fixed seed: the same sounds
+     * on every run) */
+    {
+        setenv("OKTO_RND_SEED", "4711", 1);
+        auto chunk = [&](AEffect *x) {   /* the sound in the project chunk, without the generator's own settings */
+            void *ptr = nullptr; intptr_t len = x->dispatcher(x, 23, 0, 0, &ptr, 0);
+            std::string t((const char *)ptr, (size_t)len), o;
+            for (size_t p = 0; p < t.size();) { size_t q = t.find(';', p); if (q == std::string::npos) q = t.size() - 1;
+                const std::string kv = t.substr(p, q - p + 1); if (kv.rfind("rnd_", 0) != 0) o += kv; p = q + 1; }
+            return o;
+        };
+        auto loudest = [&](const Buf &a, const Buf &b) {   /* the loudest 0.5 s, rms of L and R */
+            double best = 0; const size_t w = (size_t)(0.5 * SR), hop = (size_t)(0.05 * SR);
+            for (size_t i = 0; i + w <= a.size(); i += hop) {
+                double sum = 0; for (size_t j = i; j < i + w; j++) sum += 0.5 * (a[j] * a[j] + b[j] * b[j]);
+                best = std::max(best, std::sqrt(sum / w));
+            }
+            return best;
+        };
+        const int NST = 14;   /* oktornd::NSTYLES */
+        const char *names[NST] = {"TALK", "LEAD", "BASS", "ACID", "STAB", "PAD", "PLUCK", "BELL", "SEQ", "FX", "DRONE", "PERC", "ANY", "MUTATE"};
+        e->dispatcher(e, 2, 0, 0, nullptr, 0);
+        double lo = 0, hi = -99; int n = 0;
+        for (int st = 0; st < NST; st++) {
+            set(e, "rnd_style", st);
+            CHECK(display(e, "rnd_style") == names[st], "style name %s", display(e, "rnd_style").c_str());
+            for (int vi = 0; vi < 3; vi++) for (int mi = 0; mi < 2; mi++) {
+                set(e, "rnd_style", st); set(e, "rnd_var", vi * 50); set(e, "rnd_mod", mi * 100);
+                press(e, "rnd_go");
+                run(e, 0.05);
+                Buf R;
+                const int key = st == 11 ? 48 : 60;
+                on(e, key, 100);
+                Buf a = run(e, 2.0, &R);
+                off(e, key);
+                Buf t = run(e, 7.0);
+                const double l = db(loudest(a, R));
+                const double pk = std::max(peak(a), peak(R));
+                std::printf("  RANDOM %-6s var %3d mod %3d: %6.1f dBFS rms, peak %.2f, tail %.5f  [%s]\n", names[st], vi * 50, mi * 100, l, pk,
+                            peak(t, 6.5), display(e, "slot").c_str());
+                CHECK(l > -34 && l < -11, "RANDOM %s var %d mod %d: level %.1f dBFS", names[st], vi * 50, mi * 100, l);
+                CHECK(pk < 0.99, "RANDOM %s: peak %.2f", names[st], pk);
+                CHECK(peak(t, 6.5) < 1e-3, "RANDOM %s var %d mod %d does not end", names[st], vi * 50, mi * 100);
+                if (st < 12) { lo = std::min(lo, l); hi = std::max(hi, l); n++; }
+            }
+        }
+        std::printf("  RANDOM levels: %.1f .. %.1f dBFS over %d sounds\n", lo, hi, n);
+        /* VARIATION 0 is the home sound, the same every time */
+        set(e, "rnd_style", 0); set(e, "rnd_var", 0); set(e, "rnd_mod", 0);
+        press(e, "rnd_go"); const std::string h1 = chunk(e);
+        press(e, "rnd_go"); const std::string h2 = chunk(e);
+        CHECK(h1 == h2, "VARIATION 0 is not the same twice");
+        CHECK(display(e, "slot").rfind("NEW TALK", 0) == 0, "slot display after RANDOM: %s", display(e, "slot").c_str());
+        /* above 0 every press is new; UNDO goes back step by step */
+        set(e, "rnd_var", 60); set(e, "rnd_mod", 50);
+        press(e, "rnd_go"); const std::string r1 = chunk(e);
+        press(e, "rnd_go"); const std::string r2 = chunk(e);
+        CHECK(r1 != r2, "two RANDOMs at VARIATION 60 made the same sound");
+        press(e, "rnd_undo");
+        if (chunk(e) != r1) { const std::string u = chunk(e); size_t i = 0; while (i < u.size() && i < r1.size() && u[i] == r1[i]) i++;
+            std::printf("  undo differs at %zu: ...%s | ...%s\n", i, r1.substr(i > 40 ? i - 40 : 0, 90).c_str(), u.substr(i > 40 ? i - 40 : 0, 90).c_str()); }
+        CHECK(chunk(e) == r1, "UNDO did not go back to the previous sound");
+        press(e, "rnd_undo"); CHECK(chunk(e) == h2, "the second UNDO did not go back further");
+        /* MUTATE changes the sound playing, not the generator settings */
+        set(e, "rnd_style", 13); set(e, "rnd_var", 30);
+        const std::string before = chunk(e);
+        press(e, "rnd_go");
+        CHECK(chunk(e) != before && display(e, "rnd_style") == "MUTATE", "MUTATE changed nothing");
+        /* SAVE names a generated sound after its style; the generator's settings stay out of the slot */
+        set(e, "rnd_style", 0); set(e, "rnd_var", 40); press(e, "rnd_go");
+        set(e, "slot", 31); press(e, "save");
+        CHECK(progname(e, 30) == "TALK 31", "saved generated sound is called %s", progname(e, 30).c_str());
+        CHECK(display(e, "slot") == "TALK 31", "slot display after SAVE: %s", display(e, "slot").c_str());
+        if (FILE *fb = std::fopen(bank, "r")) {
+            char line[65536]; bool rk = false;
+            while (std::fgets(line, sizeof line, fb)) if (std::strstr(line, "rnd_") || std::strstr(line, "sel=")) rk = true;
+            std::fclose(fb);
+            CHECK(!rk, "a preset slot holds generator settings or EDIT");
+        }
+        set(e, "rnd_var", 35); set(e, "rnd_mod", 40);
     }
 
     /* 10. stress: random values on every parameter, notes, CCs */

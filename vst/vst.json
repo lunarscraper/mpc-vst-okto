@@ -2,7 +2,7 @@
   "name": "Okto",
   "vendor": "lunarscraper",
   "uid": "Okto",
-  "version": 100,
+  "version": 110,
   "so": "okto.so",
   "module": "module.json",
   "layout": "layout.conf",
