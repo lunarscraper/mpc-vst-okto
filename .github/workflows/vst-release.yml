@@ -6,7 +6,7 @@ on:
       version:
         description: Version, e.g. 0.1.0
         required: true
-        default: 0.1.0
+        default: 1.1.0
       dry_run:
         description: Build only (zip + skin previews as run artifacts), no draft release
         type: boolean
@@ -26,5 +26,5 @@ jobs:
       host_test: bash vst/test.sh
       plugin_id: okto
       license: MIT
-      about: 8-operator FM synthesizer after libfmsynth - free 8 x 8 modulation matrix, every operator a carrier with its own pan, six waveforms, envelopes with 8 breakpoints that loop or step in tempo divisions like a sequencer (in the manner of FM8), pitch envelope, LFO, mono/legato/unison; 32 preset slots with LOAD/SAVE.
+      about: 8-operator FM synthesizer after libfmsynth - free 8 x 8 modulation matrix, every operator a carrier with its own pan, six waveforms, envelopes with 8 breakpoints that loop or step in tempo divisions like a sequencer (in the manner of FM8), pitch envelope, LFO, mono/legato/unison; 32 preset slots with LOAD/SAVE; a preset generator (STYLE, VARIATION, MODULATION, RANDOM, UNDO).
       dry_run: ${{ inputs.dry_run }}
