@@ -7,12 +7,12 @@ MPC Live/One/X/Key). Die FM-Engine folgt [libfmsynth](https://github.com/Themais
 von Hans-Kristian Arntzen (MIT); dazu kommen Hüllkurven, die sich wie ein Step-Sequencer nutzen
 lassen, im Stil von FM8. Keine Abhängigkeiten, eine Header-Datei für den Klang.
 
-**Stand:** vollständiges Repo (Klang, Plugin-Hülle, Skin, 32 Werksklänge, Preset-Generator, Build, Workflow).
-Version 1.1.0: Preset-Generator auf der Seite PRESET (neue Parameter nur angehängt – alte Projekte und
-Speicherplätze laden unverändert).
-1.0 läuft auf der Force. Der Generator (1.1.0) ist offline getestet (Host-Test mit ASan/UBSan
-bestanden, alle Stile mit VARIATION 0/50/100 und MODULATION 0/100); Build über GitHub Actions und
-Test auf der Force stehen noch aus.
+**Stand:** vollständiges Repo (Klang, Plugin-Hülle, Skin, 32 Werksklänge, Preset-Generator, SHAPE, Build, Workflow).
+Version 1.2.0: **SHAPE**, ein Wavetable-Modulator mit 128 morphbaren Konturen und eigenen WAV-Dateien
+(Seiten SHAPE und SHP MOD). Version 1.1.0: Preset-Generator auf der Seite PRESET. Neue Parameter sind nur
+angehängt – alte Projekte und Speicherplätze laden unverändert und klingen gleich.
+1.0 läuft auf der Force. 1.1.0 und 1.2.0 sind offline getestet (Host-Test mit ASan/UBSan bestanden, auch
+alle SHAPE-Prüfungen); Build über GitHub Actions und Test auf der Force stehen noch aus.
 
 ## Was Okto kann
 
@@ -39,6 +39,10 @@ Test auf der Force stehen noch aus.
 - **LFO:** Sinus, Dreieck, Säge ab/auf, Rechteck, S&H; frei oder im Tempo; Delay; Key-Sync.
   Wirkt pro Operator auf Pegel und Tonhöhe, global als Vibrato (auch per Modrad).
 - **Stimmen:** POLY (1–16 Stimmen), MONO, LEGATO, Glide, Unison bis 3 mit Detune und Stereo-Breite.
+- **SHAPE** (seit 1.2.0): ein Wavetable-Modulator – 16 Tabellen mit je 8 Konturen (128 insgesamt), MORPH
+  blendet durch die Konturen einer Tabelle, als Hüllkurve, Schleife, Ping-Pong oder freier LFO (im Tempo auf
+  die Songposition eingerastet), WARP X/Y, dazu 16 eigene Tabellen aus WAV-Dateien. Wirkt pro Operator auf
+  Pegel und Tonhöhe, global auf BRIGHT und die Tonhöhe – siehe unten.
 - **Makros:** BRIGHT (alle Modulationstiefen, 0–200 %), FEEDBACK (nur die Diagonale), ENV TIME
   und RELEASE (alle Zeiten ×0,25 … ×4).
 - MIDI: sample-genaue Noten, Pitch Bend (Bereich einstellbar), Modrad (Pegel pro Operator,
@@ -67,6 +71,8 @@ Parameter (Presets, Projekte und Automation arbeiten damit).
 | LEVELS | Level 1–4 | Level 5–8 (darunter Times 1–8 zum Antippen) |
 | TIMES | Time 1–4 | Time 5–8 (darunter Levels 1–8 zum Antippen) |
 | LFO | Rate, Wave, Sync, Delay | Vibrato, Wheel Vibrato, Wheel Bright (Key Sync nur per Touch) |
+| SHAPE | Table, Morph, Mode, Sync | Rate, Warp X, Warp Y, LFO > Morph |
+| SHP MOD | **EDIT**, Op Level, Op Pitch, Bright | Pitch, Vel > Morph, Wheel > Morph, Morph |
 | VOICE | Mode, Voices, Glide, Unison | Detune, Width, Transpose, Bend Range |
 | PRESET | Style, Variation, Modulation, **RANDOM** | Preset (blättern), **LOAD**, **SAVE**, **UNDO** |
 
@@ -105,7 +111,10 @@ Gefällt er, PRESET auf einen Platz drehen und **SAVE** – der Platz heißt dan
   zusätzlicher Modulator, neue Step-Muster, Unison. Bei 0 kommt immer derselbe Grundklang.
 - **MODULATION** (0–100): wie viel sich von selbst bewegt – Modulatoren als Step- oder
   Loop-Hüllkurven im Tempo, LFO auf Pegel und Tonhöhe (bei TALK/SEQ oft S&H), ein kurzer
-  Pitch-Blip, Vibrato; das Modrad regelt immer die Helligkeit (WHEEL BRIGHT). Bei 0 bleibt nur die
+  Pitch-Blip, Vibrato; das Modrad regelt immer die Helligkeit (WHEEL BRIGHT). Seit 1.2.0 auch
+  **SHAPE** passend zum Stil: TALK sagt „wow“ (pro Note oder im Tempo, Formant-Träger gegeneinander),
+  SEQ/PAD/DRONE bekommen ein Trancegate auf dem Takt oder einen langsamen Scan, BASS/ACID Akzente auf
+  BRIGHT, FX einen Riser oder Chaos auf der Tonhöhe, der Rest eine BRIGHT-Bewegung pro Note. Bei 0 bleibt nur die
   Bewegung, die zum Stil gehört (die Steps von TALK und SEQ).
 - **Lautstärke:** Bei echter FM behält ein Sinus-Träger seinen Pegel, egal wie stark er moduliert
   wird. Der Generator rechnet daher die Lautstärke aus OUT, LEVEL und den Hüllkurven der Träger
@@ -115,6 +124,79 @@ Gefällt er, PRESET auf einen Platz drehen und **SAVE** – der Platz heißt dan
   Speicherplatz, und LOAD ändert sie nicht.
 - Q-Links auf PRESET: Style, Variation, Modulation, Preset. RANDOM, UNDO, LOAD und SAVE sind
   Tasten zum Antippen (große Beschriftung).
+
+## SHAPE – der Wavetable-Modulator
+
+Die Idee stammt von den Wavetable-Hüllkurven und -LFOs der Polyend Tracker Community Edition (morphbare
+Konturen, Warp in X und Y, eigene Konturen als WAV). Okto setzt das selbst um, es steckt kein Code der
+Tracker-Firmware darin.
+
+**Seite SHAPE – was sich bewegt:**
+
+- **TABLE:** eine von 16 Werkstabellen oder USER 1–16 (eigene WAVs, siehe unten). Jede Werkstabelle hat
+  8 Konturen; `docs/shape_tables.png` zeigt alle 128 auf einen Blick.
+
+  | Tabelle | Konturen (MORPH 0 → 100) |
+  | --- | --- |
+  | DECAY | linear bis sehr steil fallend |
+  | SWELL | langsam bis schnell steigend |
+  | LFO | Sinus, Dreieck, Säge auf/ab, Rechteck, Puls 25 %/10 %, gestufter Sinus |
+  | GATE | 8 Trancegate-Muster, 16 Steps |
+  | TALK | Vokalbewegungen: „wow“, „ya-ya“, „yoy“, Flattern |
+  | STEPS | 8-Step-Treppen und Figuren |
+  | BOUNCE | springender Ball, 2–9 Sprünge |
+  | WOBBLE | 1–16 Wellen pro Durchlauf |
+  | RANDOM | weiche Zufallskurven (fest, also wiederholbar) |
+  | S&H | gestufter Zufall, 4–32 Stufen |
+  | PULSE | 4 Pulse pro Durchlauf, Breite 5–90 % |
+  | SPIKE | 1–16 kurze Spitzen |
+  | ACID | 16tel mit Akzent, die abklingen |
+  | RISE | Riser, die letzten vier mit schneller werdendem Tremolo |
+  | CHAOS | logistische Abbildung, von geordnet bis chaotisch |
+  | RATCHET | Schläge, die zum Ende dichter werden |
+
+- **MORPH:** blendet weich durch die Konturen der Tabelle. Dazu kommen LFO > MORPH (Seite SHAPE),
+  VEL > MORPH und WHEEL > MORPH (Seite SHP MOD).
+- **MODE:** `ENV` läuft pro Note einmal durch und bleibt am Ende stehen. `LOOP` wiederholt sich und startet mit
+  jeder Note neu. `PING` läuft vor und zurück. `FREE` läuft frei für alle Stimmen. Mit SYNC rastet FREE bei
+  laufendem Transport auf die Songposition ein, so sitzt ein Gate immer auf dem Raster, egal wann die Note
+  kommt.
+- **SYNC / RATE:** Bei SYNC FREE ist RATE eine Zeit von 10 ms bis 20 s (ENV TIME wirkt mit). Mit SYNC ist
+  RATE die Anzahl der Notenwerte, 1–16. Die Voreinstellung 16 × 1/16 ist ein Takt, also 1/16 pro Gate-Step.
+- **WARP X:** verschiebt die Kontur zeitlich (+ später, − früher). **WARP Y:** macht sie voller (+) oder
+  dünner (−).
+
+**Seite SHP MOD – wohin es geht:**
+
+- **OP LEVEL** (pro Operator, folgt EDIT): +100 % heißt, die Kontur *ist* der Pegel. −100 % heißt, die
+  Kontur steht auf dem Kopf (laut, wo sie 0 ist). Dazwischen anteilig. Auf einem Träger ergibt das ein Gate
+  oder Tremolo, auf einem Modulator eine Klangfarbe.
+- **OP PITCH** (pro Operator): bis ±12 Halbtöne bei Kontur 1.
+- **BRIGHT:** alle Modulationstiefen ×4 (+100 %) bzw. ×0,25 (−100 %) bei Kontur 1.
+- **PITCH:** alle Operatoren, bis ±24 Halbtöne.
+- Ohne einen Betrag bewegt SHAPE nichts – alte Klänge bleiben unverändert.
+
+**Rezepte:**
+
+- *Trancegate:* TABLE GATE, MODE FREE, SYNC 1/16, RATE 16; EDIT auf den Träger, OP LEVEL +100 %. MORPH wählt
+  das Muster.
+- *Alien-Sprech:* TABLE TALK, MODE ENV, RATE ca. 400 ms; bei mehreren Formant-Trägern OP LEVEL abwechselnd
+  + und − (zum Beispiel OP 3 +70 %, OP 4 −60 %, OP 5 +50 %). Dann sagt jede Note „wow“. Mit VEL > MORPH
+  klingen harte Anschläge anders als weiche.
+- *Acid-Akzente:* TABLE ACID, MODE FREE, SYNC 1/16, RATE 16, BRIGHT +60 %.
+- *Wavetable-Scan:* RANDOM oder WOBBLE, LFO > MORPH 50 %, BRIGHT +40 %.
+
+**Eigene Tabellen (USER 1–16):** WAV-Dateien in einen Ordner `okto_shapes` legen, der neben
+`okto_presets.txt` liegt (also neben dem Plugin-Ordner; alternativ im Plugin-Ordner selbst). Okto liest
+beim Start bis zu 16 Dateien, alphabetisch sortiert. Die Seite SHAPE zeigt sie mit Namen („U1 GROWL“).
+
+- Eine Wavetable im Serum-Format (Frames zu 2048 Samples, oder so viele, wie ihr „clm “-Chunk angibt) liefert
+  bis zu 8 ihrer Frames, gleichmäßig verteilt; MORPH blendet dazwischen. So werden auch die Serum- und
+  Virus-Wavetables der Force zu Modulationskurven.
+- Eine kurze Datei (bis 4096 Samples) ist eine einzelne Kontur.
+- 8/16/24/32 Bit Integer oder 32 Bit Float, nur der erste Kanal. Jede Tabelle wird als Ganzes auf 0..1
+  skaliert. Kaputte Dateien werden übersprungen, leere Plätze zeigen „USER n --“ und bewegen nichts.
+- Neue Dateien zählen erst, nachdem MPC neu gestartet wurde.
 
 ## Werksklänge (Plätze 1–32)
 
@@ -141,13 +223,15 @@ Projekt speichern.**
 ```
 vst/okto_core.h      Klangerzeugung (FM-Kern nach libfmsynth + Hüllkurven, LFO, Stimmen)
 vst/okto_random.h    Preset-Generator (Stile, VARIATION, MODULATION, Lautstärkeabgleich)
+vst/okto_shape.h     SHAPE: die 128 Werkskonturen (beim Laden berechnet) und der WAV-Import
+docs/shape_tables.png  alle Werkskonturen als Bild
 vst/okto_vst.cpp     Plugin-Hülle: Parameter, EDIT-Auswahl, MIDI, 32 Speicherplätze, Projekt-Chunk
 vst/okto_params.h    erzeugt: Schlüssel, Startwerte, Werksklänge
 vst/module.json      erzeugt: Parameterliste = VST-Index-Reihenfolge (nur anhängen!)
 vst/params.lock      prüft beim Build, dass sich kein Index verschiebt
-vst/layout.conf      Skin: 10 Seiten im Raster von Rattler / carp 2000
+vst/layout.conf      Skin: 12 Seiten im Raster von Rattler / carp 2000
 vst/vst.json         Name, UID (Okto), .so
-vst/build.sh         Build (ruft die Werkzeuge von sd88me/mpc-vst-plugins)
+vst/build.sh         Build (ruft die Werkzeuge von open-mpc/mpc-vst-plugins)
 vst/test.sh          Host-Test (ASan/UBSan) + CPU-Messung
 vst/host_test.cpp    der Test selbst
 tools/gen_okto.py    erzeugt module.json + okto_params.h (nach Änderungen an Parametern/Klängen)
@@ -160,6 +244,9 @@ vst/presets-libfmsynth/   die Original-Presets von libfmsynth (26–32)
 - Die Plugin-Hülle hält sich an die Host-Regeln von mpc-vst-plugins (Stand 2026-10-25): kein
   UpdateDisplay bei normalen Reglerbewegungen, höchstens eines pro 50 ms, Parameter 0 (EDIT)
   übersteht MPCs Hin-und-zurück-Setzen beim Einfügen und bei STOP.
+- SHAPE kostet kaum etwas: Der Wert wird alle 32 Samples einmal pro Stimme gerechnet, der Pegel läuft
+  dazwischen als Rampe (keine Klicks auch bei harten Gates). x86-Messung: TALK mit SHAPE auf allen
+  Operatoren 0,27 % statt 0,26 %.
 - CPU (x86-Messung, nur relativ): typische Klänge mit 1–8 Noten 0,5–1,5 % eines Kerns; der
   Extremfall (alle 8 Operatoren, volle Matrix, 16 Stimmen) 7 %. Auf der Force ein Vielfaches
   davon – bei schweren Klängen VOICES klein halten.
@@ -169,4 +256,5 @@ vst/presets-libfmsynth/   die Original-Presets von libfmsynth (26–32)
 ## Lizenz
 
 MIT (siehe `LICENSE`). FM-Kern nach libfmsynth, MIT (`LICENSE-libfmsynth.txt`).
-„FM8“ ist ein Produkt von Native Instruments; keine Verbindung.
+„FM8“ ist ein Produkt von Native Instruments, „Polyend Tracker“ eines von Polyend, „Serum“ eines von Xfer
+Records; keine Verbindung.

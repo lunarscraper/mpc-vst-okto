@@ -22,6 +22,10 @@ LFOW = ["SINE", "TRIANGLE", "SAW DOWN", "SAW UP", "SQUARE", "S&H"]
 LFOSYNC = ["FREE", "4/1", "2/1", "1/1", "1/2", "1/4", "1/8", "1/16", "1/4T", "1/8T", "1/16T"]
 SEL = ["OP 1", "OP 2", "OP 3", "OP 4", "OP 5", "OP 6", "OP 7", "OP 8", "PITCH"]
 # preset generator (vst/okto_random.h: oktornd::STYLE_NAME, same order)
+# SHAPE (vst/okto_shape.h: SHAPE_FACTORY_NAME, then the user tables)
+SHTAB = ["DECAY", "SWELL", "LFO", "GATE", "TALK", "STEPS", "BOUNCE", "WOBBLE", "RANDOM", "S&H", "PULSE", "SPIKE", "ACID", "RISE",
+         "CHAOS", "RATCHET"] + ["USER %d" % i for i in range(1, 17)]
+SHMODE = ["ENV", "LOOP", "PING", "FREE"]
 STYLES = ["TALK", "LEAD", "BASS", "ACID", "STAB", "PAD", "PLUCK", "BELL", "SEQ", "FX", "DRONE", "PERC", "ANY", "MUTATE"]
 
 def P(key, name, lo=None, hi=None, options=None, access=None, default=None):
@@ -73,6 +77,16 @@ def params():
     ps += [P("rnd_style", "Random Style", options=STYLES, default="TALK"),
            P("rnd_var", "Variation", 0, 100, default=35), P("rnd_mod", "Modulation", 0, 100, default=40),
            P("rnd_go", "Random", access="write"), P("rnd_undo", "Undo", access="write")]
+    # appended in 1.2.0: SHAPE, the wavetable modulator (tabs SHAPE and SHP MOD). x_sl / x_sp are edit knobs
+    # (they follow EDIT like the x_... ones above), o<N>_sl / o<N>_sp the real per-operator values.
+    ps += [P("shp_table", "Shape Table", options=SHTAB), P("shp_morph", "Shape Morph", 0, 100),
+           P("shp_mode", "Shape Mode", options=SHMODE), P("shp_sync", "Shape Sync", options=ESYNC),
+           P("shp_rate", "Shape Rate", 0, 100), P("shp_warpx", "Shape Warp X", -100, 100), P("shp_warpy", "Shape Warp Y", -100, 100),
+           P("shp_lfo", "LFO > Morph", 0, 100), P("shp_vel", "Vel > Morph", 0, 100), P("shp_wheel", "Wheel > Morph", 0, 100),
+           P("shp_bright", "Shape > Bright", -100, 100), P("shp_pitch", "Shape > Pitch", -100, 100),
+           P("x_sl", "Edit Shape Level", -100, 100), P("x_sp", "Edit Shape Pitch", -100, 100)]
+    for op in range(1, 9):
+        ps += [P("o%d_sl" % op, "Op%d Shape Level" % op, -100, 100), P("o%d_sp" % op, "Op%d Shape Pitch" % op, -100, 100)]
     return ps
 
 # ---- unit laws (must match okto_vst.cpp) ----------------------------------------------------------
@@ -108,6 +122,10 @@ def defaults():
     for i in range(1, 9):
         d["pe_l%d" % i] = 0
         d["pe_t%d" % i] = round(u_time(0.1), 3)
+    # SHAPE: GATE as a loop of one bar (16 x 1/16), moving nothing until an amount is turned
+    d.update({"shp_table": 3, "shp_morph": 0, "shp_mode": 1, "shp_sync": 3, "shp_rate": 100, "shp_warpx": 0, "shp_warpy": 0,
+              "shp_lfo": 0, "shp_vel": 0, "shp_wheel": 0, "shp_bright": 0, "shp_pitch": 0})
+    for op in range(1, 9): d.update({"o%d_sl" % op: 0, "o%d_sp" % op: 0})
     return d
 
 # ---- libfmsynth presets ---------------------------------------------------------------------------
@@ -240,8 +258,10 @@ def main():
           "    OPR0 = %d, MAT0 = %d, PE0 = %d, NKEYS = %d," % (first("o1_wave"), first("m1_1"), first("pe_emode"), len(keys)),
           "    K_RSTYLE = %d, K_RVAR = %d, K_RMOD = %d, K_RGO = %d, K_RUNDO = %d," % (first("rnd_style"), first("rnd_var"), first("rnd_mod"), first("rnd_go"), first("rnd_undo")),
           "    NOPF = %d, NENVF = %d, NOPALL = %d," % (nopf, nenv, nopf + nenv),
+          "    SH0 = %d, X_SL = %d, X_SP = %d, SHOP0 = %d," % (first("shp_table"), first("x_sl"), first("x_sp"), first("o1_sl")),
           "};"]
     L += ["enum { " + ", ".join("G_%s = %d" % (p["key"].upper(), keys.index(p["key"])) for p in GLOBAL) + " };"]
+    L += ["enum { " + ", ".join("H_%s = %d" % (p["key"][4:].upper(), keys.index(p["key"])) for p in ps if p["key"].startswith("shp_")) + " };"]
     L += ["enum { " + ", ".join("F_%s = %d" % (k.upper(), i) for i, (k, *_r) in enumerate(OPF)) + " };"]
     L += ["enum { " + ", ".join("E_%s = %d" % (k.upper(), i) for i, (k, *_r) in enumerate(ENVF)) + " };"]
     L += ["static const char *const KEYS[NKEYS] = {"] + ["    %s," % c_str(k) for k in keys] + ["};"]

@@ -5,7 +5,8 @@
  * (sample-accurate; mod wheel, sustain, pitch bend), the host tempo for the synced envelopes and
  * the LFO, the 32 preset slots with LOAD/SAVE (pattern of mpc-vst-acid / mpc-vst-rattler), the
  * project chunk - and the EDIT selector. Since 1.1.0 also the preset generator (okto_random.h): STYLE,
- * VARIATION, MODULATION, RANDOM and UNDO on the PRESET tab.
+ * VARIATION, MODULATION, RANDOM and UNDO on the PRESET tab. Since 1.2.0 SHAPE (okto_shape.h), the wavetable
+ * modulator: tabs SHAPE and SHP MOD; its user tables are the WAV files in the folder okto_shapes.
  *
  * EDIT selector: the skin edits one operator at a time (or the pitch envelope). Every operator
  * value exists as its own VST parameter (o<N>_..., m<S>_<D>, pe_...: presets, projects and
@@ -82,7 +83,9 @@ enum { kVstMidiType = 1 };
 static inline int OPK(int op, int f) { return OPR0 + op * NOPALL + f; }      /* f < NOPF: operator, NOPF + e: its envelope */
 static inline int MATK(int s, int d) { return MAT0 + s * 8 + d; }
 static inline int PEK(int e) { return PE0 + e; }
-static bool is_proxy(int k) { return k >= X_OP0 && k < G0; }
+static inline int SHK(int op, int f) { return SHOP0 + op * 2 + f; }          /* f 0: shape level, 1: shape pitch */
+static bool is_proxy(int k) { return (k >= X_OP0 && k < G0) || k == X_SL || k == X_SP; }
+static bool is_shape_key(int k) { return k >= SH0 && k < X_SL; }
 static bool is_trigger(int k) { return k == K_LOAD || k == K_SAVE || k == K_RGO || k == K_RUNDO; }
 static bool is_gen_key(int k) { return k == K_RSTYLE || k == K_RVAR || k == K_RMOD; }
 
@@ -179,7 +182,13 @@ static int proxy_target(Plugin *w, int k) {
     if (k >= X_OP0 && k < X_FROM0) return sel < 8 ? IDX[OPK(sel, k - X_OP0)] : -1;
     if (k >= X_FROM0 && k < X_ENV0) return sel < 8 ? IDX[MATK(k - X_FROM0, sel)] : -1;
     if (k >= X_ENV0 && k < G0) return sel < 8 ? IDX[OPK(sel, NOPF + k - X_ENV0)] : IDX[PEK(k - X_ENV0)];
+    if (k == X_SL || k == X_SP) return sel < 8 ? IDX[SHK(sel, k == X_SP)] : -1;
     return -1;
+}
+/* every edit knob reads anew (EDIT turned, a sound loaded) */
+static void notify_proxies(Plugin *w, bool reset_pos = false) {
+    for (int k = 0; k < NKEYS; k++)
+        if (is_proxy(k) && IDX[k] >= 0) { w->notify[IDX[k]].store(1); if (reset_pos) w->last_pos[IDX[k]] = -1; }
 }
 /* what the host should read for parameter i */
 static float norm_of(Plugin *w, int i) {
@@ -216,6 +225,7 @@ static float law_pm(float x) { return 0.06f * x * x; }                          
 static float law_lfo(float x) { return 0.05f * std::pow(1280.0f, x); }                         /* 0.05 .. 64 Hz */
 static float law_glide(float x) { return x <= 0 ? 0.0f : 0.002f * std::pow(1000.0f, x); }     /* 2 ms .. 2 s */
 static float law_scale(float x) { return std::pow(4.0f, x); }                                  /* -1..1 -> x0.25 .. x4 */
+static float law_shape(float x) { return 0.01f * std::pow(2000.0f, x); }                      /* SHAPE free: 10 ms .. 20 s */
 static float ratio_of(int coarse, float fine) { return coarse <= 0 ? 0.0f : (coarse == 1 ? 0.5f : coarse - 1.0f) + fine * 0.01f; }
 static const double ESYNC_BEATS[10] = {0, 0.125, 1.0 / 6, 0.25, 1.0 / 3, 0.5, 2.0 / 3, 1, 2, 4};
 static const char *const ESYNC_NAME[10] = {"FREE", "1/32", "1/16T", "1/16", "1/8T", "1/8", "1/4T", "1/4", "1/2", "1/1"};
@@ -256,7 +266,22 @@ static void configure(Plugin *w) {
         p.wheel[o] = val(w, OPK(o, F_WHEEL)) * 0.01f;
         env_from(w, OPK(o, NOPF), p.env[o], false);
         for (int d = 0; d < 8; d++) p.mod[o][d] = sq(val(w, MATK(o, d)) * 0.01f);
+        p.sl[o] = val(w, SHK(o, 0)) * 0.01f;
+        p.sp[o] = val(w, SHK(o, 1)) * 0.01f;
     }
+    p.shp_tab = clampi(ival(w, H_TABLE), 0, okto::SH_NTAB - 1);
+    p.shp_morph = val(w, H_MORPH) * 0.01f;
+    p.shp_mode = clampi(ival(w, H_MODE), 0, okto::SH_NMODES - 1);
+    p.shp_beats = ESYNC_BEATS[clampi(ival(w, H_SYNC), 0, 9)];
+    p.shp_units = units_of(val(w, H_RATE));
+    p.shp_sec = law_shape(val(w, H_RATE) * 0.01f);
+    p.shp_wx = val(w, H_WARPX) * 0.01f;
+    p.shp_wy = val(w, H_WARPY) * 0.01f;
+    p.shp_lfo = val(w, H_LFO) * 0.01f;
+    p.shp_vel = val(w, H_VEL) * 0.01f;
+    p.shp_mw = val(w, H_WHEEL) * 0.01f;
+    p.shp_bright = val(w, H_BRIGHT) * 0.01f;
+    p.shp_pitch = val(w, H_PITCH) * 0.01f;
     env_from(w, PEK(0), p.pe, true);
     p.pe_depth = val(w, G_PE_DEPTH);
     p.volume = 0.8f * sq(val(w, G_VOLUME) * 0.01f);
@@ -329,7 +354,7 @@ static void apply_state(Plugin *w, const std::string &t, bool with_slot) {
         const int i = param_index(key.c_str());
         if (i >= 0 && !is_bank_key(i) && (with_slot || !is_ui_key(i))) set_val(w, i, std::atof(kv.c_str() + eq + 1));
     }
-    for (int k = X_OP0; k < G0; k++) if (IDX[k] >= 0) w->notify[IDX[k]].store(1);   /* the edit knobs follow */
+    notify_proxies(w);   /* the edit knobs follow */
     w->dirty.store(true);
 }
 
@@ -361,6 +386,17 @@ static std::string so_dir() {
         std::fclose(f);
     }
     return dir;
+}
+/* the folder with the user SHAPE tables: okto_shapes next to okto_presets.txt (beside the plugin folder), else in it */
+static std::string shape_dir() {
+    if (const char *env = std::getenv("OKTO_SHAPES")) return env;
+    std::string dir = so_dir();
+    if (dir.empty()) return "";
+    size_t cut = dir.rfind('/');
+    const std::string cand[2] = {(cut != std::string::npos && cut > 0 ? dir.substr(0, cut) : dir) + "/okto_shapes", dir + "/okto_shapes"};
+    for (const std::string &c : cand)
+        if (DIR *d = opendir(c.c_str())) { closedir(d); return c; }
+    return "";
 }
 static void bank_load_locked() {
     if (g_bank_loaded) return;
@@ -447,7 +483,7 @@ static void set_sound(Plugin *w, const float *ui) {   /* every sound parameter f
         if (i < 0 || is_bank_key(i) || is_ui_key(i)) continue;
         set_val(w, i, std::round((double)ui[k] * 1000.0) / 1000.0);   /* the precision of a saved state: UNDO and SAVE give it back exactly */
     }
-    for (int k = X_OP0; k < G0; k++) if (IDX[k] >= 0) w->notify[IDX[k]].store(1);   /* the edit knobs follow */
+    notify_proxies(w);   /* the edit knobs follow */
     w->dirty.store(true);
 }
 static void random_sound(Plugin *w) {
@@ -502,8 +538,9 @@ static void processReplacing(AEffect *e, float **in, float **out, int32_t n) {
     std::memset(L, 0, sizeof(float) * (size_t)n);
     std::memset(R, 0, sizeof(float) * (size_t)n);
 
-    const VstTimeInfo *ti = (const VstTimeInfo *)w->master(&w->fx, audioMasterGetTime, 0, kVstTempoValid, 0, 0.0f);
+    const VstTimeInfo *ti = (const VstTimeInfo *)w->master(&w->fx, audioMasterGetTime, 0, kVstTempoValid | kVstPpqPosValid, 0, 0.0f);
     if (ti && (ti->flags & kVstTempoValid)) w->engine.set_tempo(ti->tempo);
+    if (ti) w->engine.set_song((ti->flags & kVstPpqPosValid) ? ti->ppqPos : -1.0, (ti->flags & kVstTransportPlaying) != 0);
 
     int pos = 0, k = 0;
     while (pos < n) {
@@ -596,7 +633,7 @@ static void set_param_now(Plugin *w, int32_t i, float n) {
     w->cache[t].store(clamp01(n));
     w->dirty.store(true);
     if (key == K_SEL && before != w->cache[t].load()) {   /* another operator: every edit knob reads anew */
-        for (int k = X_OP0; k < G0; k++) if (IDX[k] >= 0) { w->notify[IDX[k]].store(1); w->last_pos[IDX[k]] = -1; }
+        notify_proxies(w, true);
         w->need_update.store(true);    /* like the wrapper's "refresh_display": the values shown change */
     }
     /* No UpdateDisplay for a plain host write (mpc-vst-plugins NOTES 2026-10-21): MPC rebuilds its parameter
@@ -680,6 +717,14 @@ static void fmt_env(Plugin *w, int base, int e, float v, char *b, size_t n) {
 static void display_key(Plugin *w, int idx, char *buf, size_t n) {
     const param_t *pp = &PARAMS[idx];
     const int key = KEY_OF[idx];
+    if (key == H_TABLE) {   /* a user table by its file name */
+        const int t = clampi(norm_to_ui(pp, w->cache[idx].load()), 0, okto::SH_NTAB - 1);
+        const okto::ShapeBank &b = okto::shape_bank();
+        if (t < okto::SH_NFACT) std::snprintf(buf, n, "%s", b.name[t]);
+        else if (b.name[t][0]) std::snprintf(buf, n, "U%d %s", t - okto::SH_NFACT + 1, b.name[t]);
+        else std::snprintf(buf, n, "USER %d --", t - okto::SH_NFACT + 1);
+        return;
+    }
     if (pp->nopts) { std::snprintf(buf, n, "%s", pp->opts[norm_to_ui(pp, w->cache[idx].load())]); return; }
     const float v = val_at(w, idx);
     if (key >= OPR0 && key < MAT0) {
@@ -692,6 +737,24 @@ static void display_key(Plugin *w, int idx, char *buf, size_t n) {
         case F_PAN: if (std::fabs(v) < 0.5f) std::snprintf(buf, n, "C"); else std::snprintf(buf, n, "%s%.0f", v < 0 ? "L" : "R", std::fabs(v)); return;
         case F_KSLO: case F_KSHI: std::snprintf(buf, n, "%+.2f", v * 0.02f); return;
         case F_PM: fmt_cents(buf, n, law_pm(v * 0.01f)); return;
+        default: fmt_pct(buf, n, v); return;
+        }
+    }
+    if (key >= SHOP0) {   /* per operator: shape level, shape pitch */
+        if ((key - SHOP0) % 2) std::snprintf(buf, n, "%+.1f st", v * 0.12f); else std::snprintf(buf, n, "%+.0f %%", v);
+        return;
+    }
+    if (is_shape_key(key)) {
+        switch (key) {
+        case H_RATE: {
+            const int s = clampi(ival(w, H_SYNC), 0, 9);
+            if (s) std::snprintf(buf, n, "%d x %s", units_of(v), ESYNC_NAME[s]);
+            else fmt_time(buf, n, law_shape(v * 0.01f));
+            return;
+        }
+        case H_WARPX: case H_WARPY: std::snprintf(buf, n, "%+.0f", v); return;
+        case H_BRIGHT: std::snprintf(buf, n, "x%.2f", std::exp2(2.0f * v * 0.01f)); return;
+        case H_PITCH: std::snprintf(buf, n, "%+.1f st", v * 0.24f); return;
         default: fmt_pct(buf, n, v); return;
         }
     }
@@ -797,6 +860,7 @@ extern "C" __attribute__((visibility("default"))) AEffect *VSTPluginMain(audioMa
     std::call_once(once, [] {
         for (int i = 0; i < NPARAMS; i++) KEY_OF[i] = -1;
         for (int k = 0; k < NKEYS; k++) { IDX[k] = param_index(KEYS[k]); if (IDX[k] >= 0) KEY_OF[IDX[k]] = k; }
+        okto::shapes_init(shape_dir());   /* once per process: new WAV files count after MPC restarts */
     });
     { std::lock_guard<std::mutex> lk(g_bank_lock); bank_load_locked(); }
     Plugin *w = new Plugin();

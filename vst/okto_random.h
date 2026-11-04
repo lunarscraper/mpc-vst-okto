@@ -6,8 +6,10 @@
  * goes, the further the generator moves away from it: other ratios (from harmonic to inharmonic),
  * modulation indices, envelope times, waveforms, feedback, an extra modulator, new step patterns.
  * MODULATION decides how much moves on its own: step and loop envelopes on the modulators, the LFO
- * on levels and pitch, a pitch envelope, the mod wheel. MUTATE varies the sound that is playing
- * (VARIATION = how far), ANY picks a style at random.
+ * on levels and pitch, a pitch envelope, the mod wheel, and (since 1.2.0) SHAPE: a contour per style -
+ * TALK says "wow" per note or in tempo on its formant carriers, SEQ / PAD / DRONE get a trance gate
+ * or a slow scan, BASS / ACID accents on BRIGHT, FX a riser or chaos on the pitch, the rest a movement of
+ * BRIGHT per note. MUTATE varies the sound that is playing (VARIATION = how far), ANY picks a style at random.
  *
  * Works in the parameters' own units (module.json): ui[k] for every key k of okto_params.h. The
  * caller fills ui[] with the start values (or the current sound for MUTATE) and writes the result
@@ -21,6 +23,7 @@
 #include <cmath>
 #include <cstdint>
 #include "okto_params.h"
+#include "okto_shape.h"
 
 namespace oktornd {
 
@@ -35,6 +38,10 @@ enum { EM_ONCE, EM_LOOP, EM_STEP, EM_STEP_LOOP };
 enum { LW_SINE, LW_TRI, LW_SAWD, LW_SAWU, LW_SQUARE, LW_SH };
 enum { LS_FREE, LS_4_1, LS_2_1, LS_1_1, LS_1_2, LS_1_4, LS_1_8, LS_1_16, LS_1_4T, LS_1_8T, LS_1_16T };
 enum { WV_SINE, WV_HALF, WV_ABS, WV_QUARTER, WV_SQUARE, WV_SAW };
+/* SHAPE tables and modes (okto_shape.h) */
+enum { ST_DECAY, ST_SWELL, ST_LFO, ST_GATE, ST_TALK, ST_STEPS, ST_BOUNCE, ST_WOBBLE, ST_RANDOM, ST_SH, ST_PULSE, ST_SPIKE,
+       ST_ACID, ST_RISE, ST_CHAOS, ST_RATCHET };
+enum { SM_ENV, SM_LOOP, SM_PING, SM_FREE };
 
 /* the knob laws, inverse (tools/gen_okto.py has the same) */
 static inline float u_level(float amp) {
@@ -377,6 +384,60 @@ static void vary(B &b, Rng &r, float v, int style) {
     }
 }
 
+/* ---- SHAPE (1.2.0): a contour that fits the style ------------------------------- */
+static void shape_set(B &b, int table, int mode, int sync, int units, float morph) {
+    b.g(H_TABLE) = (float)table; b.g(H_MODE) = (float)mode; b.g(H_SYNC) = (float)sync;
+    b.g(H_RATE) = u_units(units); b.g(H_MORPH) = clampf(morph, 0, 100);
+}
+static void shape(B &b, Rng &r, float m, int style, const int *cars, int nc) {
+    const float prob = style == S_TALK ? 0.45f + 0.5f * m : style == S_PERC ? 0.0f : 0.15f + 0.5f * m;
+    if (nc <= 0 || !r.p(prob)) return;
+    const float morph = 100 * r.u();
+    switch (style) {
+    case S_TALK: {   /* the formant carriers (all but the first) move against each other: a vowel change */
+        if (r.p(0.5f)) { shape_set(b, ST_TALK, SM_ENV, ES_FREE, 1, morph); b.g(H_RATE) = 100 * std::log((0.25f + 0.6f * r.u()) / 0.01f) / std::log(2000.0f); }   /* 0.25 .. 0.85 s */
+        else { static const int U[] = {4, 8, 2, 16}; shape_set(b, ST_TALK, SM_LOOP, ES_16, U[r.i(4)], morph); }
+        b.g(H_RATE) = clampf(b.g(H_RATE), 0, 100);
+        for (int k = 1; k < nc; k++) b.ui[SHOP0 + cars[k] * 2] = (k % 2 ? 1.0f : -1.0f) * (40 + 50 * r.u());
+        if (r.p(0.5f)) b.g(H_BRIGHT) = 20 + 40 * r.u();
+        b.g(H_VEL) = r.p(0.4f) ? 30 * r.u() : 0.0f;
+        break;
+    }
+    case S_SEQ: case S_PAD: case S_DRONE: {
+        if ((style == S_PAD || style == S_DRONE) && r.p(0.5f)) {   /* a slow scan on BRIGHT */
+            shape_set(b, r.p(0.5f) ? ST_RANDOM : ST_WOBBLE, SM_FREE, ES_1, 1 + r.i(4), morph * 0.4f);
+            b.g(H_BRIGHT) = 30 + 50 * r.u();
+            b.g(H_LFO) = r.p(0.5f) ? 30 * r.u() : 0.0f;
+        } else {   /* a trance gate locked to the bar */
+            static const int T[] = {ST_GATE, ST_GATE, ST_PULSE, ST_ACID, ST_RATCHET};
+            shape_set(b, T[r.i(5)], SM_FREE, ES_16, 16, morph);
+            for (int k = 0; k < nc; k++) b.ui[SHOP0 + cars[k] * 2] = 70 + 30 * r.u();
+        }
+        break;
+    }
+    case S_BASS: case S_ACID:   /* accents on the index */
+        shape_set(b, r.p(0.6f) ? ST_ACID : ST_WOBBLE, SM_FREE, ES_16, 16, morph);
+        b.g(H_BRIGHT) = 30 + 50 * r.u();
+        break;
+    case S_FX:   /* a riser or chaos on the pitch */
+        if (r.p(0.5f)) shape_set(b, ST_RISE, SM_ENV, ES_FREE, 1, morph);
+        else shape_set(b, r.p(0.5f) ? ST_CHAOS : ST_BOUNCE, SM_LOOP, ES_16, 4 + 4 * r.i(3), morph);
+        b.g(H_RATE) = b.g(H_SYNC) > 0.5f ? b.g(H_RATE) : 30 + 50 * r.u();
+        b.g(H_PITCH) = (r.p(0.5f) ? 1.0f : -1.0f) * (20 + 30 * r.u());
+        break;
+    default: {   /* LEAD, STAB, PLUCK, BELL, MUTATE: a movement of the index per note */
+        static const int T[] = {ST_TALK, ST_DECAY, ST_BOUNCE, ST_SPIKE, ST_SWELL};
+        shape_set(b, T[r.i(5)], SM_ENV, ES_FREE, 1, morph);
+        b.g(H_RATE) = 20 + 50 * r.u();
+        b.g(H_BRIGHT) = (r.p(0.75f) ? 1.0f : -1.0f) * (20 + 40 * r.u());
+        b.g(H_VEL) = r.p(0.5f) ? 40 * r.u() : 0.0f;
+        break;
+    }
+    }
+    if (r.p(0.3f)) b.g(H_WARPX) = 60 * r.b();
+    if (r.p(0.3f)) b.g(H_WARPY) = 60 * r.b();
+}
+
 /* ---- MODULATION: what moves by itself ---------------------------------------- */
 static void modulate(B &b, Rng &r, float m, int style) {
     int mods[8], nm = 0, cars[8], nc = 0;
@@ -421,6 +482,7 @@ static void modulate(B &b, Rng &r, float m, int style) {
         b.g(G_LFO_DELAY) = r.p(0.5f) ? 20 + 50 * r.u() : 0.0f;
     }
     b.g(G_MW_BRIGHT) = clampf(30 + 50 * r.u(), 0, 100);
+    shape(b, r, m, style, cars, nc);
 }
 
 /* ---- the level: about -20 dBFS rms for one note, like the factory sounds ----------- */
@@ -464,6 +526,21 @@ static float env_loudest(B &b, int n) {
     }
     return std::sqrt(best / w);
 }
+/* SHAPE on a carrier's level: the rms of the gain over one pass of the contour (a sparse gate keeps little) */
+static float shape_gain(B &b, int n) {
+    const float a = b.ui[SHOP0 + n * 2] * 0.01f;
+    if (a == 0) return 1;
+    const okto::ShapeBank &sb = okto::shape_bank();
+    const int t = (int)clampf((float)std::lround(b.g(H_TABLE)), 0, okto::SH_NTAB - 1);
+    const float m = clampf(b.g(H_MORPH) * 0.01f, 0, 1);
+    float sum = 0;
+    for (int i = 0; i < 64; i++) {
+        const float s = okto::shape_at(sb, t, m, i / 64.0f, true);
+        const float g = a > 0 ? 1 - a * (1 - s) : 1 + a * s;
+        sum += g * g;
+    }
+    return std::sqrt(sum / 64) + 0.02f;
+}
 static void level(B &b) {
     /* carriers on one pitch (same ratio, no beating offset) add up in amplitude, groups on different pitches
      * in power */
@@ -472,7 +549,7 @@ static void level(B &b) {
     for (int n = 0; n < 8; n++) {
         if (!b.is_carrier(n)) continue;
         const float o = b.o(n, F_OUT) * 0.01f;
-        const float a = law_level(b.o(n, F_LEVEL)) * o * o * env_loudest(b, n);
+        const float a = law_level(b.o(n, F_LEVEL)) * o * o * env_loudest(b, n) * shape_gain(b, n);
         const float key = std::fabs(b.o(n, F_OFFSET)) > 0.5f ? 1000.0f + n : b.ratio_of(n) + 0.001f * b.o(n, F_COARSE);
         int g = 0;
         while (g < ng && std::fabs(grp_key[g] - key) > 1e-4f) g++;

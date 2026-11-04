@@ -20,6 +20,9 @@
  *   - self-feedback (the matrix diagonal) as phase modulation in the manner of the DX7, so it doesn't detune
  *   - macros: BRIGHT (all modulation), FEEDBACK (the diagonal), ENV TIME, RELEASE
  *   - only the operators that reach the output are computed
+ *   - since 1.2.0 SHAPE (okto_shape.h): a wavetable modulator - 128 morphable contours plus WAV
+ *     files, as an envelope, loop, ping-pong or free LFO (synced: locked to the song position),
+ *     warp X/Y; it moves each operator's level and pitch, BRIGHT and the global pitch
  *
  * MIT license (see ../LICENSE). No dependencies; one header.
  * ========================================================================== */
@@ -27,6 +30,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include "okto_shape.h"
 
 namespace okto {
 
@@ -96,6 +100,13 @@ struct Patch {
     float vibrato = 0, mw_vib = 0, mw_bright = 0;
     int vmode = V_POLY, voices = 8, unison = 1;
     float glide = 0, detune = 0, width = 0, transpose = 0, bend_range = 2;
+    /* SHAPE (okto_shape.h) */
+    int shp_tab = 3, shp_mode = SH_LOOP, shp_units = 16;
+    double shp_beats = 0.25;                         /* 0 = free (shp_sec), else beats per division */
+    float shp_sec = 0.5f, shp_morph = 0, shp_wx = 0, shp_wy = 0;
+    float shp_lfo = 0, shp_vel = 0, shp_mw = 0;      /* morph modulation, 0..1 */
+    float shp_bright = 0, shp_pitch = 0;             /* -1..1: BRIGHT x4 / x0.25, global pitch +-24 st */
+    float sl[NOPS] = {0}, sp[NOPS] = {0};            /* -1..1 per operator: level, pitch (+-12 st) */
     Patch() { pe.lvl[0] = 0; pe.npts = 1; }
 };
 
@@ -171,6 +182,8 @@ struct Voice {
     float e[NOPS], estep[NOPS];
     Env env[NOPS], penv;
     float lfo_ph = 0, lfo_sh = 0, lfo_age = 0;
+    double sph = 0;                        /* SHAPE phase (ENV, LOOP: 0..1, PING: 0..2) */
+    float svel = 1;                        /* velocity 0..1, for VEL > MORPH */
     int count = 0;                         /* samples into the current control block */
     /* per control block, compact (index = position in the active list) */
     float inc[NOPS], K[NOPS][NOPS], amp[NOPS], pl[NOPS], pr[NOPS], fb[NOPS];
@@ -188,6 +201,12 @@ public:
     void set_patch(const Patch &p) { p_ = p; update_active(); }
     const Patch &patch() const { return p_; }
     void set_tempo(double bpm) { if (bpm > 20 && bpm < 1000) tempo_ = bpm; }
+    /* the song position at the start of a host block: a synced FREE shape follows it while the transport runs */
+    void set_song(double ppq, bool playing) {
+        if (!playing || ppq < 0 || p_.shp_mode != SH_FREE || p_.shp_beats <= 0) return;
+        const double beats = p_.shp_units * p_.shp_beats;
+        gph_ = ppq / beats - std::floor(ppq / beats);
+    }
     void set_wheel(float w) { wheel_ = clampf(w, 0, 1); }
     void set_bend(float b) { bend_ = clampf(b, -1, 1); }
     void set_sustain(bool on) {
@@ -250,11 +269,12 @@ public:
     /* adds into L and R */
     void render(float *L, float *R, int n) {
         lfo_global(n);
+        ginc_ = 1.0 / shape_len();
         for (auto &v : vo_) {
             if (!v.active) continue;
             int pos = 0;
             while (pos < n) {
-                if (v.count == 0) { tick(v); if (!v.active) break; }
+                if (v.count == 0) { tick(v, pos); if (!v.active) break; }
                 int m = BLOCK - v.count;
                 if (m > n - pos) m = n - pos;
                 frames(v, L + pos, R + pos, m);
@@ -263,6 +283,8 @@ public:
                 pos += m;
             }
         }
+        gph_ += ginc_ * n;
+        gph_ -= std::floor(gph_);
     }
 
 private:
@@ -278,6 +300,8 @@ private:
     float lfo_ph_ = 0, lfo_sh_ = 0, lfo_val_ = 0;
     int act_[NOPS], nact_ = 0;    /* the operators that reach the output, in index order */
     bool carrier_[NOPS];
+    bool shp_on_ = false;         /* SHAPE moves something */
+    double gph_ = 0, ginc_ = 0;   /* FREE shape: the phase at the start of render(), per sample */
 
     float rnd() { uint32_t x = rs_; x ^= x << 13; x ^= x >> 17; x ^= x << 5; rs_ = x; return (float)(x >> 8) * (2.0f / 16777216.0f) - 1.0f; }
 
@@ -294,6 +318,33 @@ private:
         }
         nact_ = 0;
         for (int o = 0; o < NOPS; o++) if (need[o]) act_[nact_++] = o;
+        shp_on_ = p_.shp_bright != 0 || p_.shp_pitch != 0;
+        for (int o = 0; o < NOPS; o++) shp_on_ = shp_on_ || p_.sl[o] != 0 || p_.sp[o] != 0;
+    }
+
+    /* SHAPE: one pass in samples */
+    double shape_len() const {
+        const double d = p_.shp_beats > 0 ? p_.shp_units * p_.shp_beats * 60.0 / tempo_ * sr_ : (double)p_.shp_sec * p_.env_time * sr_;
+        return d < (double)BLOCK ? (double)BLOCK : d;
+    }
+    /* the SHAPE value 0..1 for this control block (pos: the sample of render() it starts at) */
+    float shape(Voice &v, int pos, float lfo) {
+        const Patch &p = p_;
+        double ph;
+        bool loop = true;
+        if (p.shp_mode == SH_FREE) { ph = gph_ + ginc_ * pos; ph -= std::floor(ph); }
+        else {
+            v.sph += BLOCK / shape_len();
+            if (p.shp_mode == SH_ENV) { if (v.sph > 1) v.sph = 1; ph = v.sph; loop = false; }
+            else if (p.shp_mode == SH_LOOP) { v.sph -= std::floor(v.sph); ph = v.sph; }
+            else { v.sph -= 2 * std::floor(v.sph * 0.5); ph = v.sph < 1 ? v.sph : 2 - v.sph; loop = false; }
+        }
+        if (p.shp_wx != 0) ph = std::pow(ph, (double)std::exp2(2.0f * p.shp_wx));   /* + : later, - : sooner */
+        const float m = clampf(p.shp_morph + p.shp_vel * v.svel + p.shp_mw * wheel_ + p.shp_lfo * 0.5f * (lfo + 1), 0, 1);
+        float s = clampf(shape_at(shape_bank(), p.shp_tab, m, (float)ph, loop), 0, 1);
+        if (p.shp_wy > 0) s = 1 - std::pow(1 - s, std::exp2(2.0f * p.shp_wy));       /* + : fuller */
+        else if (p.shp_wy < 0) s = std::pow(s, std::exp2(-2.0f * p.shp_wy));        /* - : thinner */
+        return s;
     }
 
     void push_held(int n, float vel) {
@@ -341,6 +392,7 @@ private:
             v.estep[o] = 0;
         }
         v.penv.start(p_.pe, sr_, tempo_, p_.env_time, 0);
+        v.sph = 0; v.svel = vel;
         if (p_.lfo_key || !was) { v.lfo_ph = 0; v.lfo_sh = rnd(); }
         v.lfo_age = 0;
         v.count = 0;
@@ -375,7 +427,7 @@ private:
     }
 
     /* the control block: LFO, envelopes, glide, then the per-sample coefficients */
-    void tick(Voice &v) {
+    void tick(Voice &v, int pos) {
         const Patch &p = p_;
         /* LFO */
         float lfo;
@@ -387,10 +439,16 @@ private:
         v.lfo_age += BLOCK / sr_;
         if (p.lfo_delay > 0 && v.lfo_age < p.lfo_delay) lfo *= v.lfo_age / p.lfo_delay;
 
-        /* envelopes: the level at the end of this block, reached by a linear ramp */
+        /* SHAPE */
+        const float s = shp_on_ ? shape(v, pos, lfo) : 0.0f;
+
+        /* envelopes: the level at the end of this block, reached by a linear ramp (SHAPE scales it:
+         * LEVEL +100 % = the shape is the level, -100 % = the shape upside down) */
         bool sounding = false;
         for (int o = 0; o < NOPS; o++) {
-            const float tgt = v.env[o].advance(p.env[o], BLOCK, sr_, tempo_, p.env_time);
+            float tgt = v.env[o].advance(p.env[o], BLOCK, sr_, tempo_, p.env_time);
+            if (p.sl[o] > 0) tgt *= 1 - p.sl[o] * (1 - s);
+            else if (p.sl[o] < 0) tgt *= 1 + p.sl[o] * s;
             v.estep[o] = (tgt - v.e[o]) * (1.0f / BLOCK);
             if (carrier_[o] && !(v.env[o].silent(p.env[o]) && std::fabs(v.e[o]) < 1e-4f)) sounding = true;
         }
@@ -409,16 +467,19 @@ private:
         const float semis = v.note_cur - 69 + p.transpose + v.detune + bend_ * p.bend_range;
         const float f0 = 440.0f * std::exp2(semis / 12.0f);
         const float vib = p.vibrato + p.mw_vib * wheel_;
-        const float bright = p.bright + p.mw_bright * wheel_;
+        float bright = p.bright + p.mw_bright * wheel_;
+        if (p.shp_bright != 0) bright *= std::exp2(2.0f * p.shp_bright * s);
+        const float gsh = p.shp_pitch * 24.0f * s;
         const float isr = 1.0f / sr_;
 
         float inc[NOPS];
         for (int a = 0; a < nact_; a++) {
             const int o = act_[a];
             const float fm = 1.0f + (p.pm[o] + vib) * lfo;
+            const float pf = std::exp2((pe * p.penv[o] + gsh + p.sp[o] * 12.0f * s) / 12.0f);
             float f;
-            if (p.ratio[o] > 0) f = (f0 * p.ratio[o] * std::exp2(pe * p.penv[o] / 12.0f) + p.offset[o]) * fm;
-            else f = std::fabs(p.offset[o]) * std::exp2(pe * p.penv[o] / 12.0f) * fm;
+            if (p.ratio[o] > 0) f = (f0 * p.ratio[o] * pf + p.offset[o]) * fm;
+            else f = std::fabs(p.offset[o]) * pf * fm;
             inc[a] = clampf(f * isr, -0.49f, 0.49f);
             v.inc[a] = inc[a];
             const float w = 1.0f - p.wheel[o] + p.wheel[o] * wheel_;

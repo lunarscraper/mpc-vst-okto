@@ -3419,6 +3419,232 @@
    "key": "rnd_undo",
    "name": "Undo",
    "access": "write"
+  },
+  {
+   "key": "shp_table",
+   "name": "Shape Table",
+   "options": [
+    "DECAY",
+    "SWELL",
+    "LFO",
+    "GATE",
+    "TALK",
+    "STEPS",
+    "BOUNCE",
+    "WOBBLE",
+    "RANDOM",
+    "S&H",
+    "PULSE",
+    "SPIKE",
+    "ACID",
+    "RISE",
+    "CHAOS",
+    "RATCHET",
+    "USER 1",
+    "USER 2",
+    "USER 3",
+    "USER 4",
+    "USER 5",
+    "USER 6",
+    "USER 7",
+    "USER 8",
+    "USER 9",
+    "USER 10",
+    "USER 11",
+    "USER 12",
+    "USER 13",
+    "USER 14",
+    "USER 15",
+    "USER 16"
+   ]
+  },
+  {
+   "key": "shp_morph",
+   "name": "Shape Morph",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "shp_mode",
+   "name": "Shape Mode",
+   "options": [
+    "ENV",
+    "LOOP",
+    "PING",
+    "FREE"
+   ]
+  },
+  {
+   "key": "shp_sync",
+   "name": "Shape Sync",
+   "options": [
+    "FREE",
+    "1/32",
+    "1/16T",
+    "1/16",
+    "1/8T",
+    "1/8",
+    "1/4T",
+    "1/4",
+    "1/2",
+    "1/1"
+   ]
+  },
+  {
+   "key": "shp_rate",
+   "name": "Shape Rate",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "shp_warpx",
+   "name": "Shape Warp X",
+   "min": -100,
+   "max": 100
+  },
+  {
+   "key": "shp_warpy",
+   "name": "Shape Warp Y",
+   "min": -100,
+   "max": 100
+  },
+  {
+   "key": "shp_lfo",
+   "name": "LFO > Morph",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "shp_vel",
+   "name": "Vel > Morph",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "shp_wheel",
+   "name": "Wheel > Morph",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "shp_bright",
+   "name": "Shape > Bright",
+   "min": -100,
+   "max": 100
+  },
+  {
+   "key": "shp_pitch",
+   "name": "Shape > Pitch",
+   "min": -100,
+   "max": 100
+  },
+  {
+   "key": "x_sl",
+   "name": "Edit Shape Level",
+   "min": -100,
+   "max": 100
+  },
+  {
+   "key": "x_sp",
+   "name": "Edit Shape Pitch",
+   "min": -100,
+   "max": 100
+  },
+  {
+   "key": "o1_sl",
+   "name": "Op1 Shape Level",
+   "min": -100,
+   "max": 100
+  },
+  {
+   "key": "o1_sp",
+   "name": "Op1 Shape Pitch",
+   "min": -100,
+   "max": 100
+  },
+  {
+   "key": "o2_sl",
+   "name": "Op2 Shape Level",
+   "min": -100,
+   "max": 100
+  },
+  {
+   "key": "o2_sp",
+   "name": "Op2 Shape Pitch",
+   "min": -100,
+   "max": 100
+  },
+  {
+   "key": "o3_sl",
+   "name": "Op3 Shape Level",
+   "min": -100,
+   "max": 100
+  },
+  {
+   "key": "o3_sp",
+   "name": "Op3 Shape Pitch",
+   "min": -100,
+   "max": 100
+  },
+  {
+   "key": "o4_sl",
+   "name": "Op4 Shape Level",
+   "min": -100,
+   "max": 100
+  },
+  {
+   "key": "o4_sp",
+   "name": "Op4 Shape Pitch",
+   "min": -100,
+   "max": 100
+  },
+  {
+   "key": "o5_sl",
+   "name": "Op5 Shape Level",
+   "min": -100,
+   "max": 100
+  },
+  {
+   "key": "o5_sp",
+   "name": "Op5 Shape Pitch",
+   "min": -100,
+   "max": 100
+  },
+  {
+   "key": "o6_sl",
+   "name": "Op6 Shape Level",
+   "min": -100,
+   "max": 100
+  },
+  {
+   "key": "o6_sp",
+   "name": "Op6 Shape Pitch",
+   "min": -100,
+   "max": 100
+  },
+  {
+   "key": "o7_sl",
+   "name": "Op7 Shape Level",
+   "min": -100,
+   "max": 100
+  },
+  {
+   "key": "o7_sp",
+   "name": "Op7 Shape Pitch",
+   "min": -100,
+   "max": 100
+  },
+  {
+   "key": "o8_sl",
+   "name": "Op8 Shape Level",
+   "min": -100,
+   "max": 100
+  },
+  {
+   "key": "o8_sp",
+   "name": "Op8 Shape Pitch",
+   "min": -100,
+   "max": 100
   }
  ]
 }

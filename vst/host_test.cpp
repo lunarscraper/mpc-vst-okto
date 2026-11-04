@@ -5,7 +5,9 @@
  * and its amount per operator, mono / legato with glide, unison width, sustain pedal, the EDIT
  * selector (edit knobs read and write the selected operator, PITCH, Q-Link steps), the 32 preset
  * slots (program list, every factory sound plays, SAVE/LOAD, shared bank file), chunk restore,
- * output ceiling, a random parameter/MIDI stress run, NaN/denormal-free output.
+ * output ceiling, a random parameter/MIDI stress run, NaN/denormal-free output. Since 1.2.0 SHAPE (11.): no effect
+ * without an amount, a gate in tempo, level upside down, an ENV contour, pitch / op pitch / bright, FREE locked to
+ * the song position, user WAV tables (names, contours, morph over their frames), VEL > MORPH, chunk restore.
  * With "bench" as the second argument it only measures CPU load. Prints PASSED/FAILED. */
 #include <chrono>
 #include <cmath>
@@ -16,6 +18,7 @@
 #include <string>
 #include <vector>
 #include <dlfcn.h>
+#include <sys/stat.h>
 
 #include "build/params.h"   /* the same table the plugin is built with (ranges, options) */
 
@@ -46,6 +49,8 @@ typedef struct {
 static VstTimeInfo g_ti;
 static bool g_time = true;
 static double g_tempo = 120;
+static bool g_play = false;      /* transport running: the host reports ppqPos (from g_spos) */
+static double g_spos = 0;        /* song position in samples, counted by run() */
 static int g_updates = 0;
 static intptr_t master(AEffect *, int32_t op, int32_t, intptr_t, void *, float) {
     if (op == 42) g_updates++;
@@ -53,6 +58,7 @@ static intptr_t master(AEffect *, int32_t op, int32_t, intptr_t, void *, float) 
     std::memset(&g_ti, 0, sizeof g_ti);
     g_ti.tempo = g_tempo;
     g_ti.flags = 1 << 10;
+    if (g_play) { g_ti.ppqPos = g_spos / 44100.0 * g_tempo / 60.0; g_ti.flags |= (1 << 9) | (1 << 1); }
     return (intptr_t)&g_ti;
 }
 static int fails = 0;
@@ -91,6 +97,7 @@ static Buf run(AEffect *e, double sec, Buf *right = nullptr) {
     float *out[2] = {ol.data(), orr.data()};
     for (int b = 0; b < (int)(sec * SR / BS); b++) {
         e->processReplacing(e, nullptr, out, BS);
+        g_spos += BS;
         for (int i = 0; i < BS; i++) {
             for (float s : {ol[i], orr[i]}) if (!std::isfinite(s) || std::fpclassify(s) == FP_SUBNORMAL) bad = true;
             outL.push_back(ol[i]);
@@ -139,6 +146,32 @@ int main(int argc, char **argv) {
     const char *bank = "/tmp/okto_test_presets.txt";
     std::remove(bank);
     setenv("OKTO_PRESETS", bank, 1);
+    /* user SHAPE tables: a Serum-style wavetable (2 frames of 2048, 16 bit, "clm " chunk: ramp up, ramp down) and a
+     * short single contour (600 samples, float: a hump) */
+    {
+        const char *dir = "/tmp/okto_test_shapes";
+        mkdir(dir, 0755);
+        auto wav = [](const char *path, const std::vector<float> &x, bool flt, bool clm) {
+            FILE *f = std::fopen(path, "wb");
+            if (!f) return;
+            const uint32_t bps = flt ? 4 : 2, dlen = (uint32_t)x.size() * bps, clen = clm ? 8 + 16 : 0;
+            auto u32 = [&](uint32_t v) { std::fwrite(&v, 4, 1, f); };
+            auto u16 = [&](uint16_t v) { std::fwrite(&v, 2, 1, f); };
+            std::fwrite("RIFF", 1, 4, f); u32(4 + 24 + clen + 8 + dlen); std::fwrite("WAVE", 1, 4, f);
+            std::fwrite("fmt ", 1, 4, f); u32(16); u16(flt ? 3 : 1); u16(1); u32(44100); u32(44100 * bps); u16((uint16_t)bps); u16((uint16_t)(bps * 8));
+            if (clm) { std::fwrite("clm ", 1, 4, f); u32(16); std::fwrite("<!>2048 00000000", 1, 16, f); }
+            std::fwrite("data", 1, 4, f); u32(dlen);
+            for (float v : x) { if (flt) std::fwrite(&v, 4, 1, f); else u16((uint16_t)(int16_t)std::lround(v * 32767)); }
+            std::fclose(f);
+        };
+        std::vector<float> ramp(4096), hump(600);
+        for (int i = 0; i < 2048; i++) { ramp[i] = -1 + 2.0f * i / 2047; ramp[2048 + i] = 1 - 2.0f * i / 2047; }
+        for (int i = 0; i < 600; i++) hump[i] = 0.5f - 0.5f * std::cos(2 * M_PI * i / 600);
+        wav("/tmp/okto_test_shapes/a_ramp.wav", ramp, false, true);
+        wav("/tmp/okto_test_shapes/b_hump.WAV", hump, true, false);
+        { FILE *f = std::fopen("/tmp/okto_test_shapes/c_broken.wav", "wb"); if (f) { std::fputs("RIFF....WAVEjunk", f); std::fclose(f); } }
+        setenv("OKTO_SHAPES", dir, 1);
+    }
     void *h = dlopen(argv[1], RTLD_NOW);
     if (!h) { std::printf("FAIL: %s\n", dlerror()); return 1; }
     typedef AEffect *(*MainF)(audioMasterCallback);
@@ -174,6 +207,18 @@ int main(int argc, char **argv) {
             double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
             off(e, 60); run(e, 3);
             std::printf("bench (this CPU, one core): %-40s %.2f %%\n", "RANDOM TALK (6 op, mono), 1 note", 100 * s / 10.0);
+        }
+        {   /* the same with SHAPE on every operator's level and pitch, BRIGHT and PITCH (the worst case) */
+            set(e, "rnd_style", 0); set(e, "rnd_var", 0); set(e, "rnd_mod", 0); press(e, "rnd_go");
+            set(e, "shp_table", 4); set(e, "shp_mode", 1); set(e, "shp_warpx", 30); set(e, "shp_warpy", -30); set(e, "shp_lfo", 50);
+            set(e, "shp_bright", 40); set(e, "shp_pitch", 5);
+            for (int o = 1; o <= 8; o++) { setk(e, op(o, "sl"), 50); setk(e, op(o, "sp"), 10); }
+            on(e, 60); run(e, 0.05);
+            auto t0 = std::chrono::steady_clock::now();
+            run(e, 10.0);
+            double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+            off(e, 60); run(e, 3);
+            std::printf("bench (this CPU, one core): %-40s %.2f %%\n", "RANDOM TALK + SHAPE everywhere, 1 note", 100 * s / 10.0);
         }
         /* worst case: all eight operators sounding, the full 8 x 8 matrix, 16 voices */
         plain(e);
@@ -589,6 +634,99 @@ int main(int argc, char **argv) {
             CHECK(!rk, "a preset slot holds generator settings or EDIT");
         }
         set(e, "rnd_var", 35); set(e, "rnd_mod", 40);
+    }
+
+    /* 11. SHAPE (1.2.0) */
+    {
+        const double U_500MS = 100 * std::log(0.5 / 0.01) / std::log(2000.0);   /* RATE for 0.5 s (free) */
+        plain(e);
+        Buf ref = note(e, 69, 0.6);
+        /* without an amount the shape settings change nothing */
+        set(e, "shp_table", 4); set(e, "shp_mode", 0); set(e, "shp_morph", 50); set(e, "shp_warpx", 40); set(e, "shp_lfo", 70);
+        Buf a0 = note(e, 69, 0.6);
+        CHECK(std::fabs(db(rms(a0)) - db(rms(ref))) < 0.05, "SHAPE without an amount changed the level: %.2f dB", db(rms(a0)) - db(rms(ref)));
+        /* the default: GATE (frame 1: x.x.x.x...) as a loop of one bar at 1/16 -> 125 ms steps at 120 BPM, on 85 % of a step */
+        plain(e);
+        CHECK(display(e, "shp_table") == "GATE" && display(e, "shp_rate") == "16 x 1/16", "SHAPE defaults: %s, %s", display(e, "shp_table").c_str(), display(e, "shp_rate").c_str());
+        set(e, "sel", 0); set(e, "x_sl", 100);
+        CHECK(getn(e, "o1_sl") > 0.99f && display(e, "x_sl") == "+100 %", "OP LEVEL (x_sl) did not write OP 1: %s", display(e, "x_sl").c_str());
+        set(e, "sel", 8); CHECK(display(e, "x_sl") == "--", "OP LEVEL with EDIT = PITCH: %s", display(e, "x_sl").c_str());
+        set(e, "sel", 0);
+        Buf g = note(e, 69, 1.0);
+        const double gon = db(rms(g, 0.01, 0.10)), goff = db(rms(g, 0.135, 0.24)), gon2 = db(rms(g, 0.26, 0.35));
+        std::printf("  SHAPE gate: on %.1f, off %.1f, on %.1f dB\n", gon, goff, gon2);
+        CHECK(gon - goff > 30 && gon2 - goff > 30, "SHAPE gate: on %.1f off %.1f on %.1f dB", gon, goff, gon2);
+        set(e, "x_sl", -100);   /* upside down */
+        Buf gi = note(e, 69, 1.0);
+        CHECK(db(rms(gi, 0.135, 0.24)) - db(rms(gi, 0.01, 0.10)) > 30, "SHAPE level -100 %% is not the gate upside down");
+        /* ENV: DECAY frame 1 (1 - x) over 0.5 s */
+        plain(e);
+        set(e, "shp_table", 0); set(e, "shp_mode", 0); set(e, "shp_sync", 0); set(e, "shp_rate", U_500MS);
+        CHECK(display(e, "shp_rate") == "500 ms", "SHAPE rate display: %s", display(e, "shp_rate").c_str());
+        set(e, "sel", 0); set(e, "x_sl", 100);
+        Buf d = note(e, 69, 0.8);
+        const double d1 = db(rms(d, 0.05, 0.10)), d2 = db(rms(d, 0.35, 0.40)), d3 = db(rms(d, 0.55, 0.75));
+        CHECK(d1 - d2 > 8 && d1 - d2 < 13 && d1 - d3 > 60, "SHAPE ENV decay: %.1f, %.1f, %.1f dB", d1, d2, d3);
+        set(e, "shp_mode", 1);   /* LOOP: back up after 0.5 s */
+        Buf dl = note(e, 69, 0.8);
+        CHECK(db(rms(dl, 0.52, 0.57)) - db(rms(dl, 0.42, 0.47)) > 10, "SHAPE LOOP did not start the contour again");
+        /* PITCH +100 % = +24 st at 1 (an empty user table is a flat 1), OP PITCH +100 % = +12 st */
+        plain(e);
+        set(e, "shp_table", 31); set(e, "shp_pitch", 100);
+        CHECK(display(e, "shp_table") == "USER 16 --" && display(e, "shp_pitch") == "+24.0 st", "SHAPE display: %s %s", display(e, "shp_table").c_str(), display(e, "shp_pitch").c_str());
+        Buf p1 = note(e, 57, 0.5);
+        CHECK(std::fabs(cents(freq(p1, 880), 880)) < 3, "SHAPE PITCH +24 st: %.1f Hz", freq(p1, 880));
+        set(e, "shp_pitch", 0); set(e, "sel", 0); set(e, "x_sp", 100);
+        Buf p2 = note(e, 57, 0.5);
+        CHECK(std::fabs(cents(freq(p2, 440), 440)) < 3, "SHAPE OP PITCH +12 st: %.1f Hz", freq(p2, 440));
+        /* BRIGHT -100 % = the modulation x0.25: fewer sidebands */
+        plain(e);
+        set(e, "m2_1", 60); set(e, "shp_table", 31);
+        Buf b0 = note(e, 69, 0.5);
+        set(e, "shp_bright", -100);
+        CHECK(display(e, "shp_bright") == "x0.25", "SHAPE bright display: %s", display(e, "shp_bright").c_str());
+        Buf b1 = note(e, 69, 0.5);
+        const double h0 = db(goertzel(b0, 880) / goertzel(b0, 440)), h1 = db(goertzel(b1, 880) / goertzel(b1, 440));
+        CHECK(h0 - h1 > 10, "SHAPE BRIGHT -100 %%: 2nd harmonic %.1f -> %.1f dB", h0, h1);
+        /* FREE, synced, transport running: the gate follows the song position, not the note */
+        plain(e);
+        set(e, "shp_mode", 3); set(e, "sel", 0); set(e, "x_sl", 100);
+        g_play = true; g_spos = 0;
+        run(e, 0.3);
+        const double t0 = g_spos / SR;
+        Buf fr = note(e, 69, 0.7);
+        const double fon = db(rms(fr, 0.51 - t0, 0.60 - t0)), foff = db(rms(fr, 0.385 - t0, 0.49 - t0));
+        CHECK(fon - foff > 30, "SHAPE FREE not on the song grid: on %.1f off %.1f dB (note at %.3f s)", fon, foff, t0);
+        g_play = false;
+        /* user WAV tables: sorted by name, a broken file skipped */
+        set(e, "shp_table", 16); const std::string u1 = display(e, "shp_table");
+        set(e, "shp_table", 17); const std::string u2 = display(e, "shp_table");
+        set(e, "shp_table", 18); const std::string u3 = display(e, "shp_table");
+        CHECK(u1 == "U1 A_RAMP" && u2 == "U2 B_HUMP" && u3 == "USER 3 --", "user tables: %s | %s | %s", u1.c_str(), u2.c_str(), u3.c_str());
+        plain(e);
+        set(e, "shp_table", 16); set(e, "shp_mode", 0); set(e, "shp_sync", 0); set(e, "shp_rate", U_500MS);
+        set(e, "sel", 0); set(e, "x_sl", 100);
+        Buf w0 = note(e, 69, 0.6);
+        set(e, "shp_morph", 100);
+        Buf w1 = note(e, 69, 0.6);
+        const double up = db(rms(w0, 0.35, 0.40)) - db(rms(w0, 0.05, 0.10)), dn = db(rms(w1, 0.05, 0.10)) - db(rms(w1, 0.35, 0.40));
+        CHECK(up > 8 && dn > 8, "user WAV frames: ramp up %.1f dB, MORPH 100 ramp down %.1f dB", up, dn);
+        set(e, "shp_table", 17); set(e, "shp_morph", 0);   /* the hump: quiet, loud in the middle, quiet */
+        Buf w2 = note(e, 69, 0.6);
+        CHECK(db(rms(w2, 0.22, 0.28)) - db(rms(w2, 0.01, 0.04)) > 15 && db(rms(w2, 0.22, 0.28)) - db(rms(w2, 0.47, 0.5)) > 15, "user single contour (hump)");
+        /* VEL > MORPH: a hard note reaches the second frame (ramp down) */
+        set(e, "shp_table", 16); set(e, "shp_vel", 100);
+        on(e, 69, 127); Buf vh = run(e, 0.6); off(e, 69); run(e, 1.0);
+        on(e, 69, 1); Buf vs = run(e, 0.6); off(e, 69); run(e, 1.0);
+        CHECK(db(rms(vh, 0.05, 0.10)) > db(rms(vh, 0.35, 0.40)) + 8 && db(rms(vs, 0.35, 0.40)) > db(rms(vs, 0.05, 0.10)) + 8, "VEL > MORPH");
+        /* the project chunk brings the shape back */
+        void *cp = nullptr; const intptr_t cl = e->dispatcher(e, 23, 0, 0, &cp, 0);
+        const std::string saved((const char *)cp, (size_t)cl);
+        CHECK(saved.find("shp_table=16") != std::string::npos && saved.find("o1_sl=100") != std::string::npos, "chunk lacks the shape: %s", saved.c_str());
+        plain(e);
+        e->dispatcher(e, 24, 0, (intptr_t)saved.size(), (void *)saved.data(), 0);
+        CHECK(display(e, "shp_table") == "U1 A_RAMP" && display(e, "shp_vel") == "100 %", "chunk restore of the shape");
+        plain(e);
     }
 
     /* 10. stress: random values on every parameter, notes, CCs */
