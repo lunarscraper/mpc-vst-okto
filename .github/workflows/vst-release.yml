@@ -6,7 +6,7 @@ on:
       version:
         description: Version, e.g. 0.1.0
         required: true
-        default: 1.1.0
+        default: 1.2.0
       dry_run:
         description: Build only (zip + skin previews as run artifacts), no draft release
         type: boolean
@@ -14,17 +14,17 @@ on:
 
 jobs:
   okto:
-    uses: sd88me/mpc-vst-plugins/.github/workflows/vst-release.yml@59d9c25f4f8c09cc15b05892d5a765b1a280dc43
+    uses: open-mpc/mpc-vst-plugins/.github/workflows/vst-release.yml@8e266cec8abd3d780e331404209c3e8b8f699c5c
     permissions:
       contents: write
     with:
       tag: okto-vst-v${{ inputs.version }}
       version: ${{ inputs.version }}
-      tools_ref: 59d9c25f4f8c09cc15b05892d5a765b1a280dc43
+      tools_ref: 8e266cec8abd3d780e331404209c3e8b8f699c5c
       vst_dir: vst
       build: bash vst/build.sh
       host_test: bash vst/test.sh
       plugin_id: okto
       license: MIT
-      about: 8-operator FM synthesizer after libfmsynth - free 8 x 8 modulation matrix, every operator a carrier with its own pan, six waveforms, envelopes with 8 breakpoints that loop or step in tempo divisions like a sequencer (in the manner of FM8), pitch envelope, LFO, mono/legato/unison; 32 preset slots with LOAD/SAVE; a preset generator (STYLE, VARIATION, MODULATION, RANDOM, UNDO).
+      about: 8-operator FM synthesizer after libfmsynth - free 8 x 8 modulation matrix, every operator a carrier with its own pan, six waveforms, envelopes with 8 breakpoints that loop or step in tempo divisions like a sequencer (in the manner of FM8), pitch envelope, LFO, mono/legato/unison; 32 preset slots with LOAD/SAVE; a preset generator (STYLE, VARIATION, MODULATION, RANDOM, UNDO); SHAPE, a wavetable modulator with 128 morphable contours and own WAV tables (envelope, loop, ping-pong or free LFO locked to the song position, warp X/Y) on operator level and pitch, brightness and pitch.
       dry_run: ${{ inputs.dry_run }}
