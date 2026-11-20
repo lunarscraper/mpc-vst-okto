@@ -14,6 +14,12 @@ angehängt – alte Projekte und Speicherplätze laden unverändert und klingen 
 1.0 läuft auf der Force. 1.1.0 und 1.2.0 sind offline getestet (Host-Test mit ASan/UBSan bestanden, auch
 alle SHAPE-Prüfungen); Build über GitHub Actions und Test auf der Force stehen noch aus.
 
+## Force-Look (Version 1.3.0)
+
+Große Schrift und große Tasten, gut lesbar auf Armlänge, auf einer farbigen Seite mit eigenem Farbschema: Synthwave (Magenta/Cyan) - Verlauf, Lichtstrahlen, dunkle Felder hinter den Bedienelementen für Kontrast. EDIT (OP 1-8, PITCH) steht auf jeder Operator-Seite als Reihe großer Felder oben rechts - ein Tipp wählt den Operator; auf OP, OP MOD, ENV und SHAPE MOD zeigt das erste Feld EDIT groß (Q-Link 1 dreht es wie bisher). Die Hüllkurven-Level (LEVELS, TIMES) sind Fader. LFO KEY SYNC liegt nicht mehr auf einem Q-Link.
+
+Technik: `vst/force_look.py` läuft als `skin_post` von `gen_vst.py` und malt die Bilder des Generators neu (gleiche Dateinamen und Größen, TUI.json und Q-Links bleiben, wie der Generator sie baut). Bedienelemente haben einen transparenten Grund und liegen auf dem Seitenbild; die Zeilen `#@look`, `#@title`, `#@frame`, `#@text` in `layout.conf` sind Kommentare für den Generator und werden von `force_look.py` gezeichnet. Parameter, Presets und Projekte sind unverändert. Der Workflow nutzt open-mpc/mpc-vst-plugins (Stand 1af05b9, mit Installation nach "VST2 Plugins" ab MPC OS 3.10.1). Nach dem Installieren die Force einmal neu starten: MPC lädt einen geänderten Skin erst nach einem Neustart.
+
 ## Was Okto kann
 
 - **8 Operatoren, keine festen Algorithmen:** freie 8×8-Modulationsmatrix, jeder Operator kann
